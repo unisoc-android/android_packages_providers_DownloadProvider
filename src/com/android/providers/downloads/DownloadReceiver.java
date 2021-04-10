@@ -49,6 +49,12 @@ import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.regex.Pattern;
+/*
+ * for downloadprovider_DRM
+ *@{
+ */
+import com.android.providers.downloadsplugin.DownloadsDRMUtils;
+/*@}*/
 
 /**
  * Receives system broadcasts (boot, network connectivity)
@@ -73,6 +79,7 @@ public class DownloadReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(final Context context, final Intent intent) {
         final String action = intent.getAction();
+        Log.d(TAG, "onReceive action: " + action);
         if (Intent.ACTION_BOOT_COMPLETED.equals(action)
                 || Intent.ACTION_MEDIA_MOUNTED.equals(action)) {
             final PendingResult result = goAsync();
@@ -123,9 +130,22 @@ public class DownloadReceiver extends BroadcastReceiver {
                     Context.NOTIFICATION_SERVICE);
             notifManager.cancel(notifTag, 0);
         }
+        /*
+         * for downloadprovider_DRM
+         *@{
+         */
+        else if (action.equals(DownloadsDRMUtils.DELETE_DOWNLOAD_INFORMATION)){
+            DownloadsDRMUtils.getInstance(context).deleteDatabase(context, intent);
+        }
+        /*@}*/
     }
 
     private void handleBootCompleted(Context context) {
+        boolean isDownloadAlertEnabled = DownloadManager.isDownloadAlertEnabled();
+        Log.d(TAG, "handleBootCompleted isDownloadAlertEnabled: " + isDownloadAlertEnabled);
+        if (isDownloadAlertEnabled) {
+            Helpers.resetUnfinishedDownload(context);
+        }
         // Show any relevant notifications for completed downloads
         getDownloadNotifier(context).update();
 
@@ -178,6 +198,15 @@ public class DownloadReceiver extends BroadcastReceiver {
      */
     private void handleNotificationBroadcast(Context context, Intent intent) {
         final String action = intent.getAction();
+        /*
+         * for downloadprovider_DRM
+         *@{
+         */
+        if(DownloadsDRMUtils.getInstance(context).handleDRMNotificationBroadcast(context, intent)) {
+            Log.d(TAG, "handleNotificationBroadcast : DRM");
+            return;
+        }
+        /*@}*/
         if (Constants.ACTION_LIST.equals(action)) {
             final long[] ids = intent.getLongArrayExtra(
                     DownloadManager.EXTRA_NOTIFICATION_CLICK_DOWNLOAD_IDS);

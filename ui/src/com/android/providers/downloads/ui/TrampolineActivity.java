@@ -23,6 +23,7 @@ import android.app.DialogFragment;
 import android.app.DownloadManager;
 import android.app.DownloadManager.Query;
 import android.app.FragmentManager;
+import android.content.ContentValues;
 import android.content.ContentUris;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -31,6 +32,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
+import android.provider.Downloads;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -38,8 +40,17 @@ import com.android.providers.downloads.Constants;
 import com.android.providers.downloads.MediaStoreDownloadsHelper;
 import com.android.providers.downloads.OpenHelper;
 import com.android.providers.downloads.RawDocumentsHelper;
+import static android.provider.Downloads.Impl;
 
 import libcore.io.IoUtils;
+/*@}*/
+/*
+ * for downloadprovider_DRM
+ *@{
+ */
+import android.os.StrictMode;
+import com.android.providers.downloads.ui.uiplugin.DownloaduiDRMUtils;
+/*@}*/
 
 /**
  * Intercept all download clicks to provide special behavior. For example,
@@ -48,6 +59,7 @@ import libcore.io.IoUtils;
 public class TrampolineActivity extends Activity {
     private static final String TAG_PAUSED = "paused";
     private static final String TAG_FAILED = "failed";
+    private static final String TAG_RESUME = "resume";
 
     private static final String KEY_ID = "id";
     private static final String KEY_REASON = "reason";
@@ -86,6 +98,7 @@ public class TrampolineActivity extends Activity {
         final int status;
         final int reason;
         final long size;
+        final int control;
 
         final Cursor cursor = dm.query(new Query().setFilterById(id));
         try {
@@ -94,6 +107,7 @@ public class TrampolineActivity extends Activity {
                 reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));
                 size = cursor.getLong(
                         cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+                control = cursor.getInt(cursor.getColumnIndexOrThrow(Downloads.Impl.COLUMN_CONTROL));
             } else {
                 Toast.makeText(this, R.string.dialog_file_missing_body, Toast.LENGTH_SHORT).show();
                 finish();
@@ -103,24 +117,53 @@ public class TrampolineActivity extends Activity {
             IoUtils.closeQuietly(cursor);
         }
 
-        Log.d(Constants.TAG, "Found " + id + " with status " + status + ", reason " + reason);
+        Log.d(Constants.TAG, "Found " + id + " with status " + status + ", reason " + reason
+		        + ", control " + control);
         switch (status) {
             case DownloadManager.STATUS_PENDING:
             case DownloadManager.STATUS_RUNNING:
-                sendRunningDownloadClickedBroadcast(id);
-                finish();
+                PausedDownloadFragment.show(getFragmentManager(), id);
                 break;
 
             case DownloadManager.STATUS_PAUSED:
                 if (reason == DownloadManager.PAUSED_QUEUED_FOR_WIFI) {
                     PausedDialogFragment.show(getFragmentManager(), id, size);
                 } else {
-                    sendRunningDownloadClickedBroadcast(id);
-                    finish();
+                     boolean isStatusWrong = false;
+                     ContentValues values = new ContentValues();
+                     if (reason == DownloadManager.PAUSED_BY_APP
+                             && control != Downloads.Impl.CONTROL_PAUSED_BY_APP) {
+                         values.put(Downloads.Impl.COLUMN_CONTROL,
+                                 Downloads.Impl.CONTROL_PAUSED_BY_APP);
+                         isStatusWrong = true;
+                     } else if (reason == DownloadManager.PAUSED_UNKNOWN) {
+                         values.put(Downloads.Impl.COLUMN_STATUS,
+                                 Downloads.Impl.STATUS_PAUSED_BY_APP);
+                         values.put(Downloads.Impl.COLUMN_CONTROL,
+                                 Downloads.Impl.CONTROL_PAUSED_BY_APP);
+                         isStatusWrong = true;
+                     }
+                     if (isStatusWrong) {
+                         getContentResolver().update(ContentUris.withAppendedId(
+                                 Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI, id),
+                                 values, null, null);
+                     }
+                     ResumeDownloadFragment.show(getFragmentManager(), id);
                 }
                 break;
 
             case DownloadManager.STATUS_SUCCESSFUL:
+                /*
+                 * for downloadprovider_DRM
+                 *@{
+                 */
+                StrictMode.disableDeathOnFileUriExposure();
+                if (DownloaduiDRMUtils.getInstance(this).isDRMDownloadSuccess(id, this)) {
+                    break;
+                }
+                StrictMode.enableDeathOnFileUriExposure();
+                /*@}*/
+
                 if (!OpenHelper.startViewIntent(this, id, 0)) {
                     Toast.makeText(this, R.string.download_no_application_title, Toast.LENGTH_SHORT)
                             .show();
@@ -270,6 +313,128 @@ public class TrampolineActivity extends Activity {
             final Activity activity = getActivity();
             if (activity != null) {
                 activity.finish();
+            }
+        }
+    }
+   public static class PausedDownloadFragment extends DialogFragment {
+        public static void show(FragmentManager fm, long id) {
+            final PausedDownloadFragment dialog = new PausedDownloadFragment();
+            final Bundle args = new Bundle();
+            args.putLong(KEY_ID, id);
+            dialog.setArguments(args);
+            dialog.show(fm, TAG_PAUSED);
+        }
+
+        @Override
+        public Dialog onCreateDialog(Bundle savedInstanceState) {
+            final Context context = getActivity();
+            final DownloadManager dm = (DownloadManager) context.getSystemService(
+                    Context.DOWNLOAD_SERVICE);
+            dm.setAccessAllDownloads(true);
+
+            final long id = getArguments().getLong(KEY_ID);
+            final Cursor cursorPause = dm.query(new Query().setFilterById(id));
+            String title = "Pause";
+            try {
+                if (cursorPause.moveToFirst()) {
+                    title = cursorPause.getString(cursorPause.getColumnIndexOrThrow(
+                            DownloadManager.COLUMN_TITLE));
+                    Log.d(Constants.TAG, "pause cursor.moveToFirst() fileName = " + title);
+                } else {
+                    Log.d(Constants.TAG, "pause cursor.moveToFirst() failed");
+                }
+            } finally {
+                IoUtils.closeQuietly(cursorPause);
+            }
+
+            final AlertDialog.Builder builder = new AlertDialog.Builder(
+                    context, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert);
+            builder.setTitle(title);
+            builder.setItems(R.array.download_pause_entries, new DialogInterface.OnClickListener() {
+                public void onClick(DialogInterface dialoginterface, int i) {
+                    int mStatus = 0;
+                    final Cursor mQueryCursor = dm.query(new Query().setFilterById(id));
+                    try {
+                        if (mQueryCursor.moveToFirst()) {
+                            mStatus = mQueryCursor.getInt(mQueryCursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                        } else {
+                            Log.d(Constants.TAG, "cursor.moveToFirst() failed");
+                        }
+                    } finally {
+                        IoUtils.closeQuietly(mQueryCursor);
+                    }
+                    if(DownloadManager.STATUS_RUNNING == mStatus){
+                        Log.d(Constants.TAG, "pause to running clicked");
+                        ContentValues values = new ContentValues();
+                        values.put(Downloads.Impl.COLUMN_CONTROL, Downloads.Impl.CONTROL_PAUSED);
+                        values.put(Downloads.Impl.COLUMN_STATUS, Downloads.Impl.STATUS_PAUSED_BY_APP);
+
+                        Log.d(Constants.TAG, "pauseDownload " + id);
+                        context.getContentResolver().update(
+                                ContentUris.withAppendedId(Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI,id),
+                                values, null, null);
+                    }
+                }
+            });
+            return builder.create();
+        }
+
+        @Override
+        public void onDismiss(DialogInterface dialog) {
+            super.onDismiss(dialog);
+            if(null != getActivity()) {
+                getActivity().finish();
+            }
+        }
+    }
+
+    public static class ResumeDownloadFragment extends DialogFragment {
+        public static void show(FragmentManager fm, long id) {
+            final ResumeDownloadFragment dialog = new ResumeDownloadFragment();
+            final Bundle args = new Bundle();
+            args.putLong(KEY_ID, id);
+            dialog.setArguments(args);
+            dialog.show(fm, TAG_RESUME);
+        }
+
+        @Override
+        public Dialog onCreateDialog(Bundle savedInstanceState) {
+            final Context context = getActivity();
+            final DownloadManager dm = (DownloadManager) context.getSystemService(
+                    Context.DOWNLOAD_SERVICE);
+            dm.setAccessAllDownloads(true);
+            final long id = getArguments().getLong(KEY_ID);
+            final Cursor cursorPause = dm.query(new Query().setFilterById(id));
+            String title = "Resume";
+            try {
+                if (cursorPause.moveToFirst()) {
+                    title = cursorPause.getString(cursorPause.getColumnIndexOrThrow(
+                            DownloadManager.COLUMN_TITLE));
+                    Log.d(Constants.TAG, "resume cursor.moveToFirst() fileName = " + title);
+                } else {
+                    Log.d(Constants.TAG, "resume cursor.moveToFirst() fail");
+                }
+            } finally {
+                IoUtils.closeQuietly(cursorPause);
+            }
+
+            final AlertDialog.Builder builder = new AlertDialog.Builder(
+                    context, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert);
+            builder.setTitle(title);
+            builder.setItems(R.array.download_resum_entries, new DialogInterface.OnClickListener() {
+                public void onClick(DialogInterface dialoginterface, int i) {
+                    Log.d(Constants.TAG, "resumeDownload " + id);
+                    dm.forceDownload(id);
+                }
+            });
+            return builder.create();
+        }
+
+        @Override
+        public void onDismiss(DialogInterface dialog) {
+            super.onDismiss(dialog);
+            if(null != getActivity()) {
+                getActivity().finish();
             }
         }
     }

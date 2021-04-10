@@ -57,4 +57,6 @@
     <string name="download_running" msgid="3925050393361158266">"ပြုလုပ်နေဆဲ"</string>
     <string name="download_error" msgid="5144180777324573236">"မအောင်မြင်ပါ"</string>
     <string name="download_running_percent" msgid="4305080769167320204">"လုပ်ဆောင်နေဆဲ၊ <xliff:g id="PERCENTAGE">%s</xliff:g>"</string>
+    <string name="download_paused">ခဏရပ္ပါ</string>
+    <string name="download_confirm_msg">"ဆယ်လူလာကွန်ရက်တွင် ဒေါင်းလုဒ်လုပ်ခြင်းသည် ဒေတာစားပါလိမ့်မည်။ ရှေ့ဆက်မလား။"</string>
 </resources>

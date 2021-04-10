@@ -56,6 +56,7 @@ public class DownloadJobService extends JobService {
     @Override
     public boolean onStartJob(JobParameters params) {
         final int id = params.getJobId();
+        Log.d(TAG, "onStartJob id: " + id);
 
         // Spin up thread to handle this download
         final DownloadInfo info = DownloadInfo.queryDownloadInfo(this, id);
@@ -92,13 +93,17 @@ public class DownloadJobService extends JobService {
             // and reschedule ourselves to resume in the future.
             thread.requestShutdown();
 
-            Helpers.scheduleJob(this, DownloadInfo.queryDownloadInfo(this, id));
+            Log.d(TAG, "onStopJob mToNetConfirm: " + thread.mToNetConfirm);
+            if(!thread.mToNetConfirm){
+                Helpers.scheduleJob(this, DownloadInfo.queryDownloadInfo(this, id));
+            }
         }
         return false;
     }
 
     public void jobFinishedInternal(JobParameters params, boolean needsReschedule) {
         final int id = params.getJobId();
+        Log.d(TAG, "jobFinishedInternal  id: " + id + " needsReschedule: " + needsReschedule);
 
         synchronized (mActiveThreads) {
             mActiveThreads.remove(params.getJobId());

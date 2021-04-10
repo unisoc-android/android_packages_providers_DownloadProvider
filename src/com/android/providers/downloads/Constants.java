@@ -45,6 +45,12 @@ public class Constants {
     /** The column that is used for the initiating app's UID */
     public static final String UID = "uid";
 
+    /** The column that is used for the DRM SD type rights issuer url*/
+    public static final String RIGHTS_ISSUER = "rights_issuer";
+
+    /** The column that is used for the DRM original MIME type */
+    public static final String COLUMN_ORIGINAL_MIME_TYPE = "original_mimetype";
+
     /** the intent that gets sent when clicking a successful download */
     public static final String ACTION_OPEN = "android.intent.action.DOWNLOAD_OPEN";
 
@@ -82,6 +88,12 @@ public class Constants {
 
     /** The default user agent used for downloads */
     public static final String DEFAULT_USER_AGENT;
+
+    public static final String ACTION_DOWNLOAD_NETWORK_CONFIRMED = "android.downloads.action.DOWNLOAD_NETWORK_CONFIRMED";
+    public static final String ACTION_DOWNLOAD_TO_CONFIRME = "android.downloads.action.DOWNLOAD_TO_CONFIRME";
+    public static final String ACTION_DOWNLOAD_CONFIRM_MOBILE_TEST= "com.spreadtrum.rdtestbox.confirm_mobile_download_test";
+
+    public static final String CONFIRM_TO_DOWNLOAD = "confirmToDownload";
 
     static {
         final StringBuilder builder = new StringBuilder();

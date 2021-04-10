@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"ሁሉንም ምረጥ"</string>
     <string name="selected_count" msgid="2101564570019753277">"<xliff:g id="NUMBER">%1$d</xliff:g>ከ<xliff:g id="TOTAL">%2$d</xliff:g> ተመርጧል"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"በኩል አጋራ"</string>
+    <string-array name="download_pause_entries">
+      <item>"ላፍታ አቁም"</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+      <item>ቀጥል</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"ለመግፋት፣ እባክዎትን ቆይተው ይሞክሩ..."</string>
 </resources>

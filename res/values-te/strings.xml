@@ -57,4 +57,6 @@
     <string name="download_running" msgid="3925050393361158266">"ప్రోగ్రెస్‌లో ఉంది"</string>
     <string name="download_error" msgid="5144180777324573236">"విఫలమైంది"</string>
     <string name="download_running_percent" msgid="4305080769167320204">"ప్రోగ్రెస్‌లో ఉంది, <xliff:g id="PERCENTAGE">%s</xliff:g>"</string>
+    <string name="download_paused">స్వల్ప విశ్రాంతి</string>
+    <string name="download_confirm_msg">"సెల్ల్యులర్ నెట్ వర్క్ లో డౌన్ లోడ్ చేయుటకు డాటాను వాడుతున్నది.కొనసాగించమా?"</string>
 </resources>

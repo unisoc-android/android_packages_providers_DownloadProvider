@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"सर्व निवडा"</string>
     <string name="selected_count" msgid="2101564570019753277">"<xliff:g id="TOTAL">%2$d</xliff:g> पैकी <xliff:g id="NUMBER">%1$d</xliff:g> निवडले"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"द्वारे शेअर करा"</string>
+    <string-array name="download_pause_entries">
+      <item>"थांबा"</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+      <item>"पुन्हा सुरु करा"</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"विरामामध्ये, कृपया नंतर पुन्हा प्रयत्न करा..."</string>
 </resources>

@@ -48,4 +48,12 @@
     <string name="select_all" msgid="634074918366265804">"全選"</string>
     <string name="selected_count" msgid="2101564570019753277">"已選取 <xliff:g id="NUMBER">%1$d</xliff:g> 個，共 <xliff:g id="TOTAL">%2$d</xliff:g> 個"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"分享方式："</string>
+    <string-array name="download_pause_entries">
+        <item>"暫停"</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+        <item>"繼續"</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"正在暫停中，請稍後再試..."</string>
+
 </resources>

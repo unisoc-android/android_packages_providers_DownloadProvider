@@ -57,4 +57,6 @@
     <string name="download_running" msgid="3925050393361158266">"กำลังดำเนินการ"</string>
     <string name="download_error" msgid="5144180777324573236">"ไม่สำเร็จ"</string>
     <string name="download_running_percent" msgid="4305080769167320204">"กำลังดำเนินการ <xliff:g id="PERCENTAGE">%s</xliff:g>"</string>
+    <string name="download_paused">"หยุดชั่วคราวแล้ว"</string>
+    <string name="download_confirm_msg">"การดาวน์โหลดโดยใช้เครือข่ายเซลลูลาร์จะสิ้นเปลืองข้อมูลมือถือ ทำต่อหรือไม่"</string>
 </resources>

@@ -32,8 +32,12 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
+import android.app.DownloadManager;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.ContentValues;
+import android.content.Intent;
+import android.content.ActivityNotFoundException;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Environment;
@@ -62,14 +66,24 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Random;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+/*
+ * for downloadprovider_DRM
+ *@{
+ */
+import com.android.providers.downloadsplugin.DownloadsDRMUtils;
+/*@}*/
 
 /**
  * Some helper functions for the download manager
  */
 public class Helpers {
     public static Random sRandom = new Random(SystemClock.uptimeMillis());
+    /*@}*/
+    public static final boolean SUPPORT_SUPER_POWER_SAVE = (1 == android.os.SystemProperties.getInt("ro.sys.pwctl.ultrasaving",0));
 
     /** Regex used to parse content-disposition headers */
     private static final Pattern CONTENT_DISPOSITION_PATTERN =
@@ -127,6 +141,229 @@ public class Helpers {
 
     public static int getInt(Cursor cursor, String col) {
         return cursor.getInt(cursor.getColumnIndexOrThrow(col));
+    }
+
+    /*
+     * pop up dialog to confirm whether to start a download in GPRS.
+     * use it only if download alert is enabled.
+     */
+    public static void showDownloadConfirmDialog(Context context) {
+        Log.d(TAG, "showDownloadConfirmDialog");
+        if (DownloadConfirmActivity.isConfirmAlertDialogExist()) {
+            return;
+        }
+        final Intent intent = new Intent(Constants.ACTION_DOWNLOAD_TO_CONFIRME);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            context.startActivity(intent);
+        } catch (ActivityNotFoundException ex) {
+            Log.w(TAG, "showDownloadConfirmDialog ActivityNotFoundException");
+        }
+    }
+
+    /*
+     * close alert dialog.
+     * use it only if download alert is enabled.
+     */
+    public static void closeAlertDialog(Context context) {
+        DownloadConfirmActivity.closeAlertDialogWithConfirm(-1);
+    }
+
+    /*
+     * close alert dialog with a confirm result.
+     * use it only if download alert is enabled.
+     */
+    public static void closeAlertDialog(Context context, boolean ConfirmToDownload) {
+        DownloadConfirmActivity.closeAlertDialogWithConfirm(ConfirmToDownload ? 1 : 0);
+    }
+
+    public static void setControl(Context context, int control, long... ids) {
+        if ((null != ids) && (0 < ids.length)) {
+            final ContentValues values = new ContentValues();
+            values.put(Downloads.Impl.COLUMN_CONTROL, control);
+            context.getContentResolver().update(Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI,
+                    values, DownloadManager.getWhereClauseForIds(ids),
+                    DownloadManager.getWhereArgsForIds(ids));
+        }
+    }
+
+    /*
+     * correct the wrong state maybe caused by accidental shutdown.
+     * use it only if download alert is enabled.
+     */
+    public static void resetUnfinishedDownload(Context context) {
+        long ids[] = getIdsWithControlFilter(context, Downloads.Impl.CONTROL_RUN);
+        Helpers.pauseDownloadForNetConfirm(context, ids);
+    }
+
+    /*
+     * cancel the downloads according to the dialg confirmation.
+     * use it only if download alert is enabled.
+     */
+    public static void cancelConfirmingDownloads(Context context) {
+        int nums = 0;
+        int numsUpdate = 0;
+        int numsDelete = 0;
+        long[] idsUpdate;
+        long[] idsDelete;
+
+        long ids[] = getIdsWithStatusFilter(context,
+                DownloadManager.STATUS_WAITING_FOR_CONFIRM_NETWORK);
+        if ((null == ids) || (0 >= ids.length)) {
+            return;
+        }
+
+        nums = ids.length;
+        idsUpdate = new long[nums];
+        idsDelete = new long[nums];
+
+        for (int i = 0; i < nums; i++) {
+            long downloadId = ids[i];
+            DownloadInfo downloadInfo = DownloadInfo.queryDownloadInfo(
+                    context, downloadId);
+            if (null != downloadInfo) {
+                if (downloadInfo.mCurrentBytes >0) {
+                    idsUpdate[numsUpdate++] = downloadId;
+                } else {
+                    idsDelete[numsDelete++] = downloadId;
+                }
+            }
+        }
+
+        if (numsUpdate > 0) {
+            long[] idsUpdateNew = new long[numsUpdate];
+            System.arraycopy(idsUpdate, 0, idsUpdateNew, 0, numsUpdate);
+            final ContentValues values = new ContentValues();
+            values.put(Downloads.Impl.COLUMN_STATUS,
+                    Downloads.Impl.STATUS_PAUSED_BY_APP);
+            values.put(Downloads.Impl.COLUMN_CONTROL,
+                    Downloads.Impl.CONTROL_PAUSED_BY_APP);
+            context.getContentResolver().update(Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI,
+                    values, DownloadManager.getWhereClauseForIds(idsUpdateNew),
+                    DownloadManager.getWhereArgsForIds(idsUpdateNew));
+        }
+
+        if (numsDelete > 0) {
+            long[] idsDeleteNew = new long[numsDelete];
+            System.arraycopy(idsDelete, 0, idsDeleteNew, 0, numsDelete);
+            context.getContentResolver().delete(Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI,
+                    DownloadManager.getWhereClauseForIds(idsDeleteNew),
+                    DownloadManager.getWhereArgsForIds(idsDeleteNew));
+        }
+    }
+
+    /*
+     * pause and set state as waiting, before schedule a download job in GPRS
+     * or when network losts.
+     * use it only if download alert is enabled.
+     */
+    public static void pauseDownloadForNetConfirm(Context context, long... ids) {
+        if ((null != ids) && (0 < ids.length)) {
+            final JobScheduler scheduler = context.getSystemService(JobScheduler.class);
+            int jobId;
+            for (int i = 0; i < ids.length; i++) {
+                jobId = (int)ids[i];
+                Log.d(TAG, "pauseDownloadForNetConfirm cancel jobId: " + jobId);
+                scheduler.cancel(jobId);
+            }
+            final ContentValues values = new ContentValues();
+            values.put(Downloads.Impl.COLUMN_STATUS,
+                    Downloads.Impl.STATUS_WAITING_FOR_CONFIRM_NETWORK);
+            values.put(Downloads.Impl.COLUMN_CONTROL, Downloads.Impl.CONTROL_PAUSED);
+            context.getContentResolver().update(
+                    Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI, values,
+                    DownloadManager.getWhereClauseForIds(ids),
+                    DownloadManager.getWhereArgsForIds(ids));
+        }
+    }
+
+    /*
+     * start the downloads according to the dialg confirmation.
+     * use it only if download alert is enabled.
+     */
+    public static void confirmToDownload(Context context) {
+        long ids[] = getIdsWithStatusFilter(context,
+                DownloadManager.STATUS_WAITING_FOR_CONFIRM_NETWORK);
+        if ((null == ids) || (0 >= ids.length)) {
+            return;
+        }
+        ContentValues values = new ContentValues();
+        values.put(Downloads.Impl.COLUMN_STATUS, Downloads.Impl.STATUS_CONFIRMED_NETWORK);
+        values.put(Downloads.Impl.COLUMN_CONTROL, Downloads.Impl.CONTROL_RUN);
+        context.getContentResolver().update(Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI,
+                values, DownloadManager.getWhereClauseForIds(ids),
+                DownloadManager.getWhereArgsForIds(ids));
+    }
+
+    public static long[] getIdsWithStatusFilter(Context context, int status) {
+        DownloadManager dm = (DownloadManager) context.getSystemService(
+                Context.DOWNLOAD_SERVICE);
+        long ids[] = null;
+        int i = 0;
+        Cursor cursor = null;
+        try {
+            cursor = dm.query(new DownloadManager.Query().setFilterByStatus(status));
+            final int count = cursor.getCount();
+            if (count > 0) {
+                ids = new long[count];
+                while (cursor.moveToNext()) {
+                    ids[i] = cursor.getLong(cursor.getColumnIndexOrThrow(
+                            DownloadManager.COLUMN_ID));
+                    i++;
+                }
+            }
+        } finally {
+            if(cursor != null) cursor.close();
+        }
+        return ids;
+    }
+
+    public static long[] getIdsWithControlFilter(Context context, int control) {
+        DownloadManager dm = (DownloadManager) context.getSystemService(
+                Context.DOWNLOAD_SERVICE);
+        long ids[] = null;
+        int i = 0;
+        Cursor cursor = null;
+        try {
+            cursor = dm.query(new DownloadManager.Query().setFilterByControl(control));
+            final int count = cursor.getCount();
+            if (count > 0) {
+                ids = new long[count];
+                while (cursor.moveToNext()) {
+                    ids[i] = cursor.getLong(cursor.getColumnIndexOrThrow(
+                            DownloadManager.COLUMN_ID));
+                    i++;
+                }
+            }
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return ids;
+    }
+
+    public static long[] getIdsWithStatusAndControlFilter(Context context,
+            int status, int control) {
+        DownloadManager dm = (DownloadManager) context.getSystemService(
+                Context.DOWNLOAD_SERVICE);
+        long ids[] = null;
+        int i = 0;
+        Cursor cursor = null;
+        try {
+            cursor = dm.query(new DownloadManager.Query().setFilterByStatus(status)
+                    .setFilterByControl(control));
+            final int count = cursor.getCount();
+            if (count > 0) {
+                ids = new long[count];
+                while (cursor.moveToNext()) {
+                    ids[i] = cursor.getLong(cursor.getColumnIndexOrThrow(
+                            DownloadManager.COLUMN_ID));
+                    i++;
+                }
+            }
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return ids;
     }
 
     public static void scheduleJob(Context context, long downloadId) {
@@ -200,6 +437,7 @@ public class Helpers {
             packageName = context.getPackageManager().getPackagesForUid(info.mUid)[0];
         }
 
+        Log.d(TAG, "scheduleJob  jobId: " + jobId);
         scheduler.scheduleAsPackage(builder.build(), packageName, UserHandle.myUserId(), TAG);
         return true;
     }
@@ -247,6 +485,7 @@ public class Helpers {
             };
             name = chooseFilename(url, hint, contentDisposition, contentLocation);
         }
+        Log.d(TAG, "generateSaveFile  parent: " + parent + "  name: " + name);
 
         // Ensure target directories are ready
         for (File test : parentTest) {
@@ -255,7 +494,15 @@ public class Helpers {
             }
         }
 
-        if (DownloadDrmHelper.isDrmConvertNeeded(mimeType)) {
+        /*
+         * for downloadprovider_DRM
+         * original code
+         if (DownloadDrmHelper.isDrmConvertNeeded(mimeType)) {
+         *@{
+         */
+        if (DownloadDrmHelper.isDrmConvertNeeded(mimeType)
+                && (!DownloadsDRMUtils.getInstance(context).isSupportDRM())) {
+        /*@}*/
             name = DownloadDrmHelper.modifyDrmFwLockFileExtension(name);
         }
 
@@ -285,7 +532,14 @@ public class Helpers {
         }
 
         synchronized (sUniqueLock) {
-            name = generateAvailableFilenameLocked(parentTest, prefix, suffix);
+            /*
+             * for downloadprovider_DRM
+             * original code
+             name = generateAvailableFilenameLocked(parentTest, prefix, suffix);
+             *@{
+             */
+            name = generateAvailableFilenameLocked(context, parentTest, prefix, suffix);
+            /*@}*/
 
             // Claim this filename inside lock to prevent other threads from
             // clobbering us. We're not paranoid enough to use O_EXCL.
@@ -454,9 +708,24 @@ public class Helpers {
         return true;
     }
 
-    private static String generateAvailableFilenameLocked(
+    /*
+     * for downloadprovider_DRM
+     * original code
+     private static String generateAvailableFilenameLocked(
+     *@{
+     */
+    private static String generateAvailableFilenameLocked(Context context,
+    /*@}*/
             File[] parents, String prefix, String suffix) throws IOException {
         String name = prefix + suffix;
+
+        /*
+         * for downloadprovider_DRM
+         *@{
+         */
+        name = DownloadsDRMUtils.getInstance(context).getDRMFileName(prefix, suffix);
+        /*@}*/
+
         if (isFilenameAvailableLocked(parents, name)) {
             return name;
         }
@@ -479,6 +748,13 @@ public class Helpers {
         for (int magnitude = 1; magnitude < 1000000000; magnitude *= 10) {
             for (int iteration = 0; iteration < 9; ++iteration) {
                 name = prefix + Constants.FILENAME_SEQUENCE_SEPARATOR + sequence + suffix;
+                /*
+                 * for downloadprovider_DRM
+                 *@{
+                 */
+                name = DownloadsDRMUtils.getInstance(context).getDRMFileName(
+                        prefix + Constants.FILENAME_SEQUENCE_SEPARATOR + sequence, suffix);
+                /*@}*/
                 if (isFilenameAvailableLocked(parents, name)) {
                     return name;
                 }
@@ -678,266 +954,5 @@ public class Helpers {
         }
         // For permission related purposes, any package belonging to the given uid should work.
         return packages[0];
-    }
-
-    /**
-     * Checks whether this looks like a legitimate selection parameter
-     */
-    public static void validateSelection(String selection, Set<String> allowedColumns) {
-        try {
-            if (selection == null || selection.isEmpty()) {
-                return;
-            }
-            Lexer lexer = new Lexer(selection, allowedColumns);
-            parseExpression(lexer);
-            if (lexer.currentToken() != Lexer.TOKEN_END) {
-                throw new IllegalArgumentException("syntax error");
-            }
-        } catch (RuntimeException ex) {
-            if (Constants.LOGV) {
-                Log.d(Constants.TAG, "invalid selection [" + selection + "] triggered " + ex);
-            } else if (false) {
-                Log.d(Constants.TAG, "invalid selection triggered " + ex);
-            }
-            throw ex;
-        }
-
-    }
-
-    // expression <- ( expression ) | statement [AND_OR ( expression ) | statement] *
-    //             | statement [AND_OR expression]*
-    private static void parseExpression(Lexer lexer) {
-        for (;;) {
-            // ( expression )
-            if (lexer.currentToken() == Lexer.TOKEN_OPEN_PAREN) {
-                lexer.advance();
-                parseExpression(lexer);
-                if (lexer.currentToken() != Lexer.TOKEN_CLOSE_PAREN) {
-                    throw new IllegalArgumentException("syntax error, unmatched parenthese");
-                }
-                lexer.advance();
-            } else {
-                // statement
-                parseStatement(lexer);
-            }
-            if (lexer.currentToken() != Lexer.TOKEN_AND_OR) {
-                break;
-            }
-            lexer.advance();
-        }
-    }
-
-    // statement <- COLUMN COMPARE VALUE
-    //            | COLUMN IS NULL
-    private static void parseStatement(Lexer lexer) {
-        // both possibilities start with COLUMN
-        if (lexer.currentToken() != Lexer.TOKEN_COLUMN) {
-            throw new IllegalArgumentException("syntax error, expected column name");
-        }
-        lexer.advance();
-
-        // statement <- COLUMN COMPARE VALUE
-        if (lexer.currentToken() == Lexer.TOKEN_COMPARE) {
-            lexer.advance();
-            if (lexer.currentToken() != Lexer.TOKEN_VALUE) {
-                throw new IllegalArgumentException("syntax error, expected quoted string");
-            }
-            lexer.advance();
-            return;
-        }
-
-        // statement <- COLUMN IS NULL
-        if (lexer.currentToken() == Lexer.TOKEN_IS) {
-            lexer.advance();
-            if (lexer.currentToken() != Lexer.TOKEN_NULL) {
-                throw new IllegalArgumentException("syntax error, expected NULL");
-            }
-            lexer.advance();
-            return;
-        }
-
-        // didn't get anything good after COLUMN
-        throw new IllegalArgumentException("syntax error after column name");
-    }
-
-    /**
-     * A simple lexer that recognizes the words of our restricted subset of SQL where clauses
-     */
-    private static class Lexer {
-        public static final int TOKEN_START = 0;
-        public static final int TOKEN_OPEN_PAREN = 1;
-        public static final int TOKEN_CLOSE_PAREN = 2;
-        public static final int TOKEN_AND_OR = 3;
-        public static final int TOKEN_COLUMN = 4;
-        public static final int TOKEN_COMPARE = 5;
-        public static final int TOKEN_VALUE = 6;
-        public static final int TOKEN_IS = 7;
-        public static final int TOKEN_NULL = 8;
-        public static final int TOKEN_END = 9;
-
-        private final String mSelection;
-        private final Set<String> mAllowedColumns;
-        private int mOffset = 0;
-        private int mCurrentToken = TOKEN_START;
-        private final char[] mChars;
-
-        public Lexer(String selection, Set<String> allowedColumns) {
-            mSelection = selection;
-            mAllowedColumns = allowedColumns;
-            mChars = new char[mSelection.length()];
-            mSelection.getChars(0, mChars.length, mChars, 0);
-            advance();
-        }
-
-        public int currentToken() {
-            return mCurrentToken;
-        }
-
-        public void advance() {
-            char[] chars = mChars;
-
-            // consume whitespace
-            while (mOffset < chars.length && chars[mOffset] == ' ') {
-                ++mOffset;
-            }
-
-            // end of input
-            if (mOffset == chars.length) {
-                mCurrentToken = TOKEN_END;
-                return;
-            }
-
-            // "("
-            if (chars[mOffset] == '(') {
-                ++mOffset;
-                mCurrentToken = TOKEN_OPEN_PAREN;
-                return;
-            }
-
-            // ")"
-            if (chars[mOffset] == ')') {
-                ++mOffset;
-                mCurrentToken = TOKEN_CLOSE_PAREN;
-                return;
-            }
-
-            // "?"
-            if (chars[mOffset] == '?') {
-                ++mOffset;
-                mCurrentToken = TOKEN_VALUE;
-                return;
-            }
-
-            // "=" and "=="
-            if (chars[mOffset] == '=') {
-                ++mOffset;
-                mCurrentToken = TOKEN_COMPARE;
-                if (mOffset < chars.length && chars[mOffset] == '=') {
-                    ++mOffset;
-                }
-                return;
-            }
-
-            // ">" and ">="
-            if (chars[mOffset] == '>') {
-                ++mOffset;
-                mCurrentToken = TOKEN_COMPARE;
-                if (mOffset < chars.length && chars[mOffset] == '=') {
-                    ++mOffset;
-                }
-                return;
-            }
-
-            // "<", "<=" and "<>"
-            if (chars[mOffset] == '<') {
-                ++mOffset;
-                mCurrentToken = TOKEN_COMPARE;
-                if (mOffset < chars.length && (chars[mOffset] == '=' || chars[mOffset] == '>')) {
-                    ++mOffset;
-                }
-                return;
-            }
-
-            // "!="
-            if (chars[mOffset] == '!') {
-                ++mOffset;
-                mCurrentToken = TOKEN_COMPARE;
-                if (mOffset < chars.length && chars[mOffset] == '=') {
-                    ++mOffset;
-                    return;
-                }
-                throw new IllegalArgumentException("Unexpected character after !");
-            }
-
-            // columns and keywords
-            // first look for anything that looks like an identifier or a keyword
-            //     and then recognize the individual words.
-            // no attempt is made at discarding sequences of underscores with no alphanumeric
-            //     characters, even though it's not clear that they'd be legal column names.
-            if (isIdentifierStart(chars[mOffset])) {
-                int startOffset = mOffset;
-                ++mOffset;
-                while (mOffset < chars.length && isIdentifierChar(chars[mOffset])) {
-                    ++mOffset;
-                }
-                String word = mSelection.substring(startOffset, mOffset);
-                if (mOffset - startOffset <= 4) {
-                    if (word.equals("IS")) {
-                        mCurrentToken = TOKEN_IS;
-                        return;
-                    }
-                    if (word.equals("OR") || word.equals("AND")) {
-                        mCurrentToken = TOKEN_AND_OR;
-                        return;
-                    }
-                    if (word.equals("NULL")) {
-                        mCurrentToken = TOKEN_NULL;
-                        return;
-                    }
-                }
-                if (mAllowedColumns.contains(word)) {
-                    mCurrentToken = TOKEN_COLUMN;
-                    return;
-                }
-                throw new IllegalArgumentException("unrecognized column or keyword: " + word);
-            }
-
-            // quoted strings
-            if (chars[mOffset] == '\'') {
-                ++mOffset;
-                while (mOffset < chars.length) {
-                    if (chars[mOffset] == '\'') {
-                        if (mOffset + 1 < chars.length && chars[mOffset + 1] == '\'') {
-                            ++mOffset;
-                        } else {
-                            break;
-                        }
-                    }
-                    ++mOffset;
-                }
-                if (mOffset == chars.length) {
-                    throw new IllegalArgumentException("unterminated string");
-                }
-                ++mOffset;
-                mCurrentToken = TOKEN_VALUE;
-                return;
-            }
-
-            // anything we don't recognize
-            throw new IllegalArgumentException("illegal character: " + chars[mOffset]);
-        }
-
-        private static final boolean isIdentifierStart(char c) {
-            return c == '_' ||
-                    (c >= 'A' && c <= 'Z') ||
-                    (c >= 'a' && c <= 'z');
-        }
-
-        private static final boolean isIdentifierChar(char c) {
-            return c == '_' ||
-                    (c >= 'A' && c <= 'Z') ||
-                    (c >= 'a' && c <= 'z') ||
-                    (c >= '0' && c <= '9');
-        }
     }
 }

@@ -57,4 +57,6 @@
     <string name="download_running" msgid="3925050393361158266">"កំពុង​ដំណើរការ"</string>
     <string name="download_error" msgid="5144180777324573236">"បាន​បរាជ័យ"</string>
     <string name="download_running_percent" msgid="4305080769167320204">"កំពុង​ដំណើរការ <xliff:g id="PERCENTAGE">%s</xliff:g>"</string>
+    <string name="download_paused">បានផ្អាក</string>
+    <string name="download_confirm_msg">"ការទាញយកនៅក្នុងបណ្តាញចល័តនឹងប្រើប្រាស់ទិន្នន័យ។ បន្តឬ?"</string>
 </resources>

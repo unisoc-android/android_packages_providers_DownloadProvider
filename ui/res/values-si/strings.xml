@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"සියල්ල තෝරන්න"</string>
     <string name="selected_count" msgid="2101564570019753277">"<xliff:g id="TOTAL">%2$d</xliff:g> ගෙන් <xliff:g id="NUMBER">%1$d</xliff:g> ක් තෝරා ගන්නා ලදී"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"බෙදාගන්නේ"</string>
+    <string-array name="download_pause_entries">
+      <item>"නවතන්න"</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+      <item>"නැවත ලබා ගන්න"</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"විරාම කරමින්, කරුණාකර පසුව උත්සාහ කරන්න..."</string>
 </resources>

@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"انتخاب همه"</string>
     <string name="selected_count" msgid="2101564570019753277">"<xliff:g id="NUMBER">%1$d</xliff:g> مورد از <xliff:g id="TOTAL">%2$d</xliff:g> انتخاب شده"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"اشتراک‌گذاری از طریق"</string>
+    <string-array name="download_pause_entries">
+      <item>توقف</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+      <item>ادامه</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"در حالت مکث، لطفاً بعداً امتحان کنید..."</string>
 </resources>

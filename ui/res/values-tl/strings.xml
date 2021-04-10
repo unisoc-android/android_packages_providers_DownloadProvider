@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"Piliin lahat"</string>
     <string name="selected_count" msgid="2101564570019753277">"Pinili <xliff:g id="NUMBER">%1$d</xliff:g> sa <xliff:g id="TOTAL">%2$d</xliff:g>"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"Ibahagi gamit ang"</string>
+    <string-array name="download_pause_entries">
+      <item>tumigil</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+      <item>patuloy</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"Sa pag-pause, pakiusap subukan uli mamaya..."</string>
 </resources>

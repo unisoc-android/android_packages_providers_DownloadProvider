@@ -61,4 +61,6 @@
     <string name="download_running" msgid="3925050393361158266">"Загружается"</string>
     <string name="download_error" msgid="5144180777324573236">"Сбой"</string>
     <string name="download_running_percent" msgid="4305080769167320204">"Скачано <xliff:g id="PERCENTAGE">%s</xliff:g>"</string>
+    <string name="download_paused">"Приостановлено"</string>
+    <string name="download_confirm_msg">"При загрузке будет использован мобильный трафик. Продолжить?"</string>
 </resources>

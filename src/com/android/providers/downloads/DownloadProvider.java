@@ -37,6 +37,8 @@ import android.app.AppOpsManager;
 import android.app.DownloadManager;
 import android.app.DownloadManager.Request;
 import android.app.job.JobScheduler;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
 import android.content.ContentProvider;
 import android.content.ContentProviderClient;
 import android.content.ContentResolver;
@@ -55,6 +57,8 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.database.sqlite.SQLiteQueryBuilder;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
@@ -65,9 +69,12 @@ import android.os.ParcelFileDescriptor.OnCloseListener;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.storage.StorageManager;
+import android.os.SystemProperties;
 import android.provider.BaseColumns;
 import android.provider.Downloads;
 import android.provider.MediaStore;
+import android.provider.MediaStore.Files.FileColumns;
+import android.media.MediaFile;
 import android.provider.OpenableColumns;
 import android.text.TextUtils;
 import android.text.format.DateUtils;
@@ -83,7 +90,6 @@ import com.android.internal.util.Preconditions;
 
 import libcore.io.IoUtils;
 
-import com.google.android.collect.Maps;
 import com.google.common.annotations.VisibleForTesting;
 
 import java.io.File;
@@ -96,9 +102,9 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 
+import android.os.sprdpower.PowerManagerEx;
 /**
  * Allows application to interact with the download manager.
  */
@@ -156,48 +162,111 @@ public final class DownloadProvider extends ContentProvider {
             Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI,
     };
 
-    private static final String[] sAppReadableColumnsArray = new String[] {
-        Downloads.Impl._ID,
-        Downloads.Impl.COLUMN_APP_DATA,
-        Downloads.Impl._DATA,
-        Downloads.Impl.COLUMN_MIME_TYPE,
-        Downloads.Impl.COLUMN_VISIBILITY,
-        Downloads.Impl.COLUMN_DESTINATION,
-        Downloads.Impl.COLUMN_CONTROL,
-        Downloads.Impl.COLUMN_STATUS,
-        Downloads.Impl.COLUMN_LAST_MODIFICATION,
-        Downloads.Impl.COLUMN_NOTIFICATION_PACKAGE,
-        Downloads.Impl.COLUMN_NOTIFICATION_CLASS,
-        Downloads.Impl.COLUMN_TOTAL_BYTES,
-        Downloads.Impl.COLUMN_CURRENT_BYTES,
-        Downloads.Impl.COLUMN_TITLE,
-        Downloads.Impl.COLUMN_DESCRIPTION,
-        Downloads.Impl.COLUMN_URI,
-        Downloads.Impl.COLUMN_IS_VISIBLE_IN_DOWNLOADS_UI,
-        Downloads.Impl.COLUMN_FILE_NAME_HINT,
-        Downloads.Impl.COLUMN_MEDIAPROVIDER_URI,
-        Downloads.Impl.COLUMN_DELETED,
-        OpenableColumns.DISPLAY_NAME,
-        OpenableColumns.SIZE,
-    };
-
-    private static final HashSet<String> sAppReadableColumnsSet;
-    private static final HashMap<String, String> sColumnsMap;
-
-    static {
-        sAppReadableColumnsSet = new HashSet<String>();
-        for (int i = 0; i < sAppReadableColumnsArray.length; ++i) {
-            sAppReadableColumnsSet.add(sAppReadableColumnsArray[i]);
+    private static void addMapping(Map<String, String> map, String column) {
+        if (!map.containsKey(column)) {
+            map.put(column, column);
         }
-
-        sColumnsMap = Maps.newHashMap();
-        sColumnsMap.put(OpenableColumns.DISPLAY_NAME,
-                Downloads.Impl.COLUMN_TITLE + " AS " + OpenableColumns.DISPLAY_NAME);
-        sColumnsMap.put(OpenableColumns.SIZE,
-                Downloads.Impl.COLUMN_TOTAL_BYTES + " AS " + OpenableColumns.SIZE);
     }
-    private static final List<String> downloadManagerColumnsList =
-            Arrays.asList(DownloadManager.UNDERLYING_COLUMNS);
+
+    private static void addMapping(Map<String, String> map, String column, String rawColumn) {
+        if (!map.containsKey(column)) {
+            map.put(column, rawColumn + " AS " + column);
+        }
+    }
+
+    private static final Map<String, String> sDownloadsMap = new ArrayMap<>();
+    static {
+        final Map<String, String> map = sDownloadsMap;
+
+        // Columns defined by public API
+        addMapping(map, DownloadManager.COLUMN_ID,
+                Downloads.Impl._ID);
+        addMapping(map, DownloadManager.COLUMN_LOCAL_FILENAME,
+                Downloads.Impl._DATA);
+        addMapping(map, DownloadManager.COLUMN_MEDIAPROVIDER_URI);
+        addMapping(map, DownloadManager.COLUMN_DESTINATION);
+        addMapping(map, DownloadManager.COLUMN_TITLE);
+        addMapping(map, DownloadManager.COLUMN_DESCRIPTION);
+        addMapping(map, DownloadManager.COLUMN_URI);
+        addMapping(map, DownloadManager.COLUMN_STATUS);
+        addMapping(map, DownloadManager.COLUMN_FILE_NAME_HINT);
+        addMapping(map, DownloadManager.COLUMN_MEDIA_TYPE,
+                Downloads.Impl.COLUMN_MIME_TYPE);
+        addMapping(map, DownloadManager.COLUMN_TOTAL_SIZE_BYTES,
+                Downloads.Impl.COLUMN_TOTAL_BYTES);
+        addMapping(map, DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP,
+                Downloads.Impl.COLUMN_LAST_MODIFICATION);
+        addMapping(map, DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR,
+                Downloads.Impl.COLUMN_CURRENT_BYTES);
+        addMapping(map, DownloadManager.COLUMN_ALLOW_WRITE);
+        addMapping(map, DownloadManager.COLUMN_LOCAL_URI,
+                "'placeholder'");
+        addMapping(map, DownloadManager.COLUMN_REASON,
+                "'placeholder'");
+
+        // Columns defined by OpenableColumns
+        addMapping(map, OpenableColumns.DISPLAY_NAME,
+                Downloads.Impl.COLUMN_TITLE);
+        addMapping(map, OpenableColumns.SIZE,
+                Downloads.Impl.COLUMN_TOTAL_BYTES);
+
+        // Allow references to all other columns to support DownloadInfo.Reader;
+        // we're already using SQLiteQueryBuilder to block access to other rows
+        // that don't belong to the calling UID.
+        addMapping(map, Downloads.Impl._ID);
+        addMapping(map, Downloads.Impl._DATA);
+        addMapping(map, Downloads.Impl.COLUMN_ALLOWED_NETWORK_TYPES);
+        addMapping(map, Downloads.Impl.COLUMN_ALLOW_METERED);
+        addMapping(map, Downloads.Impl.COLUMN_ALLOW_ROAMING);
+        addMapping(map, Downloads.Impl.COLUMN_ALLOW_WRITE);
+        addMapping(map, Downloads.Impl.COLUMN_APP_DATA);
+        addMapping(map, Downloads.Impl.COLUMN_BYPASS_RECOMMENDED_SIZE_LIMIT);
+        addMapping(map, Downloads.Impl.COLUMN_CONTROL);
+        addMapping(map, Downloads.Impl.COLUMN_COOKIE_DATA);
+        addMapping(map, Downloads.Impl.COLUMN_CURRENT_BYTES);
+        addMapping(map, Downloads.Impl.COLUMN_DELETED);
+        addMapping(map, Downloads.Impl.COLUMN_DESCRIPTION);
+        addMapping(map, Downloads.Impl.COLUMN_DESTINATION);
+        addMapping(map, Downloads.Impl.COLUMN_ERROR_MSG);
+        addMapping(map, Downloads.Impl.COLUMN_FAILED_CONNECTIONS);
+        addMapping(map, Downloads.Impl.COLUMN_FILE_NAME_HINT);
+        addMapping(map, Downloads.Impl.COLUMN_FLAGS);
+        addMapping(map, Downloads.Impl.COLUMN_IS_PUBLIC_API);
+        addMapping(map, Downloads.Impl.COLUMN_IS_VISIBLE_IN_DOWNLOADS_UI);
+        addMapping(map, Downloads.Impl.COLUMN_LAST_MODIFICATION);
+        addMapping(map, Downloads.Impl.COLUMN_MEDIAPROVIDER_URI);
+        addMapping(map, Downloads.Impl.COLUMN_MEDIA_SCANNED);
+        addMapping(map, Downloads.Impl.COLUMN_MEDIASTORE_URI);
+        addMapping(map, Downloads.Impl.COLUMN_MIME_TYPE);
+        addMapping(map, Downloads.Impl.COLUMN_NO_INTEGRITY);
+        addMapping(map, Downloads.Impl.COLUMN_NOTIFICATION_CLASS);
+        addMapping(map, Downloads.Impl.COLUMN_NOTIFICATION_EXTRAS);
+        addMapping(map, Downloads.Impl.COLUMN_NOTIFICATION_PACKAGE);
+        addMapping(map, Downloads.Impl.COLUMN_OTHER_UID);
+        addMapping(map, Downloads.Impl.COLUMN_REFERER);
+        addMapping(map, Downloads.Impl.COLUMN_STATUS);
+        addMapping(map, Downloads.Impl.COLUMN_TITLE);
+        addMapping(map, Downloads.Impl.COLUMN_TOTAL_BYTES);
+        addMapping(map, Downloads.Impl.COLUMN_URI);
+        addMapping(map, Downloads.Impl.COLUMN_USER_AGENT);
+        addMapping(map, Downloads.Impl.COLUMN_VISIBILITY);
+
+        addMapping(map, Constants.ETAG);
+        addMapping(map, Constants.RETRY_AFTER_X_REDIRECT_COUNT);
+        addMapping(map, Constants.UID);
+        // Columns defined by sprd for DRM support
+        addMapping(map, Constants.COLUMN_ORIGINAL_MIME_TYPE);
+        addMapping(map, Constants.RIGHTS_ISSUER);
+    }
+
+    private static final Map<String, String> sHeadersMap = new ArrayMap<>();
+    static {
+        final Map<String, String> map = sHeadersMap;
+        addMapping(map, "id");
+        addMapping(map, Downloads.Impl.RequestHeaders.COLUMN_DOWNLOAD_ID);
+        addMapping(map, Downloads.Impl.RequestHeaders.COLUMN_HEADER);
+        addMapping(map, Downloads.Impl.RequestHeaders.COLUMN_VALUE);
+    }
 
     @VisibleForTesting
     SystemFacade mSystemFacade;
@@ -207,6 +276,7 @@ public final class DownloadProvider extends ContentProvider {
 
     /** List of uids that can access the downloads */
     private int mSystemUid = -1;
+    private static boolean isNetworkConfirmedUpdate = false;
 
     private StorageManager mStorageManager;
 
@@ -227,6 +297,7 @@ public final class DownloadProvider extends ContentProvider {
          */
         @Override
         public void onCreate(final SQLiteDatabase db) {
+            Log.d(Constants.TAG, "onCreate db");
             if (Constants.LOGVV) {
                 Log.v(Constants.TAG, "populating new database");
             }
@@ -242,6 +313,7 @@ public final class DownloadProvider extends ContentProvider {
          */
         @Override
         public void onUpgrade(final SQLiteDatabase db, int oldV, final int newV) {
+            Log.d(Constants.TAG, "onUpgrade  oldV: " + oldV + "   newV: " + newV);
             if (oldV == 31) {
                 // 31 and 100 are identical, just in different codelines. Upgrading from 31 is the
                 // same as upgrading from 100.
@@ -259,6 +331,7 @@ public final class DownloadProvider extends ContentProvider {
                 oldV = 99;
             }
 
+            Log.d(Constants.TAG, "onUpgrade  from: " + (oldV+1) + "   to: " + newV);
             for (int version = oldV + 1; version <= newV; version++) {
                 upgradeTo(db, version);
             }
@@ -338,6 +411,10 @@ public final class DownloadProvider extends ContentProvider {
 
                 case 113:
                     canonicalizeDataPaths(db);
+                    addColumn(db, DB_TABLE, Constants.RIGHTS_ISSUER,
+                        "TEXT DEFAULT NULL");
+                    addColumn(db, DB_TABLE, Constants.COLUMN_ORIGINAL_MIME_TYPE,
+                        "TEXT DEFAULT NULL");
                     break;
 
                 default:
@@ -545,11 +622,97 @@ public final class DownloadProvider extends ContentProvider {
         }
     }
 
+    private BroadcastReceiver mReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            final String action = intent.getAction();
+            Log.d(Constants.TAG, "mReceiver   action="+action);
+            if (Constants.ACTION_DOWNLOAD_NETWORK_CONFIRMED.equals(action)) {
+                if (!isAutoTestMode()) {
+                    int isConfirmToDownload = intent.getIntExtra(Constants.CONFIRM_TO_DOWNLOAD, 0);
+                    handleConfirmToDownload(context, isConfirmToDownload == 1);
+                }
+            } else if (ConnectivityManager.CONNECTIVITY_ACTION.equals(action)) {
+	            if (!DownloadManager.isDownloadAlertEnabled()) {
+	                return;
+	            }
+	            NetworkInfo extraInfo = (NetworkInfo)intent.getExtra(
+	                    ConnectivityManager.EXTRA_NETWORK_INFO);
+	            int extraNetworkType = (int)intent.getExtra(ConnectivityManager.EXTRA_NETWORK_TYPE);
+	            boolean extraInfoConnected = extraInfo.isConnectedOrConnecting();
+	            boolean isMetered = ConnectivityManager.isNetworkTypeMobile(extraNetworkType);
+	            Log.d(Constants.TAG, "CONNECTIVITY_CHANGE  extraNetworkType: " + extraNetworkType
+	                    + "  isConnected: " + extraInfoConnected + "  isMetered: " + isMetered);
+	            if (!extraInfoConnected) {
+	                if (!isMetered) {
+	                    long ids[] = Helpers.getIdsWithControlFilter(
+	                            context, Downloads.Impl.CONTROL_RUN);
+	                    if ((null != ids) && (0 < ids.length)) {
+	                        Helpers.pauseDownloadForNetConfirm(context, ids);
+	                    }
+	                }
+	            } else {
+	                long ids[] = Helpers.getIdsWithStatusFilter(context,
+	                        DownloadManager.STATUS_WAITING_FOR_CONFIRM_NETWORK);
+                    if ((null != ids) && (0 < ids.length)) {
+                        if (isMetered) {
+                            Helpers.showDownloadConfirmDialog(context);
+                        } else {
+                            Helpers.confirmToDownload(context);
+                            Helpers.closeAlertDialog(context);
+                        }
+                    }
+                }
+            } else if (Constants.ACTION_DOWNLOAD_CONFIRM_MOBILE_TEST.equals(action)) {
+                if (DownloadManager.isDownloadAlertEnabled() && isAutoTestMode()) {
+                    boolean ConfirmToDownload = (boolean)intent.getExtra(
+                            "confirmMobileClick", true);
+                    Helpers.closeAlertDialog(context);
+                    handleConfirmToDownload(context, ConfirmToDownload);
+                }
+            } else if(Helpers.SUPPORT_SUPER_POWER_SAVE && PowerManagerEx.ACTION_POWEREX_SAVE_MODE_CHANGED.equals(action)) {
+                int curMode = intent.getIntExtra(PowerManagerEx.EXTRA_POWEREX_SAVE_MODE, PowerManagerEx.MODE_INVALID);
+                if (curMode == PowerManagerEx.MODE_ULTRASAVING) {
+                    Helpers.getDownloadNotifier(context).update();
+                }
+            }
+        }
+    };
+
+    private boolean isAutoTestMode() {
+        boolean isEnabled = true;
+        String propery = SystemProperties.get("sprd.rdtestbox.enabled");
+        if (propery == null || propery.isEmpty()) {
+            isEnabled = false;
+        } else {
+            isEnabled = propery.equals("true");
+        }
+        return isEnabled;
+    }
+
+    private void handleConfirmToDownload(Context context, boolean isConfirm) {
+        Log.d(Constants.TAG, "handleConfirmToDownload   isConfirm: " + isConfirm);
+        if (isConfirm) {
+            Helpers.confirmToDownload(context);
+        } else {
+            Helpers.cancelConfirmingDownloads(context);
+        }
+    }
+
     /**
      * Initializes the content provider when it is created.
      */
     @Override
     public boolean onCreate() {
+        final IntentFilter filter = new IntentFilter();
+        filter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+        filter.addAction(Constants.ACTION_DOWNLOAD_NETWORK_CONFIRMED);
+        filter.addAction(Constants.ACTION_DOWNLOAD_CONFIRM_MOBILE_TEST);
+        if(Helpers.SUPPORT_SUPER_POWER_SAVE){
+            filter.addAction(PowerManagerEx.ACTION_POWEREX_SAVE_MODE_CHANGED);
+        }
+        getContext().registerReceiver(mReceiver, filter);
+
         if (mSystemFacade == null) {
             mSystemFacade = new RealSystemFacade(getContext());
         }
@@ -695,6 +858,7 @@ public final class DownloadProvider extends ContentProvider {
 
         // validate the destination column
         Integer dest = values.getAsInteger(Downloads.Impl.COLUMN_DESTINATION);
+        Log.d(Constants.TAG, "insert dest: " + dest);
         if (dest != null) {
             if (getContext().checkCallingOrSelfPermission(Downloads.Impl.PERMISSION_ACCESS_ADVANCED)
                     != PackageManager.PERMISSION_GRANTED
@@ -867,6 +1031,23 @@ public final class DownloadProvider extends ContentProvider {
             }
         }
 
+        String column_uri = values.getAsString(Downloads.Impl.COLUMN_URI);
+        final Cursor cursor = db.query(DB_TABLE, new String[] {
+                Downloads.Impl._ID, Downloads.Impl._DATA }, Downloads.Impl.COLUMN_URI + "= ?",
+                    new String[] {column_uri}, null, null, null);
+        try {
+            while (cursor.moveToNext()) {
+                final long downloadId = cursor.getLong(0);
+                final String path = cursor.getString(1);
+                if (path!=null && !new File(path).exists()) {
+                    db.delete(DB_TABLE, Downloads.Impl._ID + "= ?", new String[] {Long.toString(downloadId)});
+                    Log.d(Constants.TAG, "Deleting downloads with id " + downloadId + " as repeat download: " + column_uri);
+                }
+            }
+        } finally {
+            cursor.close();
+        }
+
         long rowID = db.insert(DB_TABLE, null, filteredValues);
         if (rowID == -1) {
             Log.d(Constants.TAG, "couldn't insert into downloads database");
@@ -886,7 +1067,9 @@ public final class DownloadProvider extends ContentProvider {
 
         final long token = Binder.clearCallingIdentity();
         try {
-            Helpers.scheduleJob(getContext(), rowID);
+            Log.d(Constants.TAG, "insert scheduleJob id: " + rowID);
+            scheduleJob(getContext(), rowID, filteredValues.getAsInteger(
+                    Downloads.Impl.COLUMN_STATUS));
         } finally {
             Binder.restoreCallingIdentity(token);
         }
@@ -901,9 +1084,9 @@ public final class DownloadProvider extends ContentProvider {
     private Uri updateMediaProvider(@NonNull ContentProviderClient mediaProvider,
             @NonNull ContentValues mediaValues) {
         final String filePath = mediaValues.getAsString(MediaStore.DownloadColumns.DATA);
-        Uri mediaStoreUri = getMediaStoreUri(mediaProvider, filePath);
 
         try {
+            Uri mediaStoreUri = getMediaStoreUri(mediaProvider, filePath);
             if (mediaStoreUri == null) {
                 mediaStoreUri = mediaProvider.insert(
                         MediaStore.Files.getContentUriForPath(filePath),
@@ -921,6 +1104,8 @@ public final class DownloadProvider extends ContentProvider {
             }
         } catch (RemoteException e) {
             // Should not happen
+        } catch (IllegalStateException e) {
+             Log.e(Constants.TAG, "Error updating MediaProvider " + e.getMessage());
         }
         return null;
     }
@@ -941,6 +1126,20 @@ public final class DownloadProvider extends ContentProvider {
         return null;
     }
 
+    private int getMediaType(String mimeType) {
+        if (MediaFile.isPlayListMimeType(mimeType)) {
+            return FileColumns.MEDIA_TYPE_PLAYLIST;
+        } else if (MediaFile.isAudioMimeType(mimeType)) {
+            return FileColumns.MEDIA_TYPE_AUDIO;
+        } else if (MediaFile.isVideoMimeType(mimeType)) {
+            return FileColumns.MEDIA_TYPE_VIDEO;
+        } else if (MediaFile.isImageMimeType(mimeType)) {
+            return FileColumns.MEDIA_TYPE_IMAGE;
+        } else {
+            return FileColumns.MEDIA_TYPE_NONE;
+        }
+    }
+
     private ContentValues convertToMediaProviderValues(DownloadInfo info) {
         final String filePath;
         try {
@@ -950,10 +1149,15 @@ public final class DownloadProvider extends ContentProvider {
         }
         final ContentValues mediaValues = new ContentValues();
         mediaValues.put(MediaStore.Downloads.DATA,  filePath);
-        mediaValues.put(MediaStore.Downloads.SIZE, info.mTotalBytes);
         mediaValues.put(MediaStore.Downloads.DOWNLOAD_URI, info.mUri);
         mediaValues.put(MediaStore.Downloads.REFERER_URI, info.mReferer);
-        mediaValues.put(MediaStore.Downloads.MIME_TYPE, info.mMimeType);
+        if(info.mMimeType != null && info.mMimeType.equals(DownloadDrmHelper.DRM_CONTENT_TYPE)) {
+            String originalmime = DownloadDrmHelper.getOriginalMimeType(getContext(), new File(filePath), info.mMimeType);
+            mediaValues.put(FileColumns.MEDIA_TYPE, getMediaType(originalmime));
+            mediaValues.put(MediaStore.Downloads.IS_DRM, 1);
+        } else if(info.mMimeType != null && !info.mMimeType.equals(DownloadDrmHelper.DRM_CONVERT_TYPE)) {
+            mediaValues.put(MediaStore.Downloads.MIME_TYPE, info.mMimeType);
+        }
         mediaValues.put(MediaStore.Downloads.IS_PENDING,
                 Downloads.Impl.isStatusSuccess(info.mStatus) ? 0 : 1);
         mediaValues.put(MediaStore.Downloads.OWNER_PACKAGE_NAME,
@@ -972,8 +1176,6 @@ public final class DownloadProvider extends ContentProvider {
         }
         final ContentValues mediaValues = new ContentValues();
         mediaValues.put(MediaStore.Downloads.DATA, filePath);
-        mediaValues.put(MediaStore.Downloads.SIZE,
-                downloadValues.getAsLong(Downloads.Impl.COLUMN_TOTAL_BYTES));
         mediaValues.put(MediaStore.Downloads.DOWNLOAD_URI,
                 downloadValues.getAsString(Downloads.Impl.COLUMN_URI));
         mediaValues.put(MediaStore.Downloads.REFERER_URI,
@@ -1304,28 +1506,6 @@ public final class DownloadProvider extends ContentProvider {
             return qb.query(db, projection, null, null, null, null, null);
         }
 
-        if (shouldRestrictVisibility()) {
-            if (projection == null) {
-                projection = sAppReadableColumnsArray.clone();
-            } else {
-                // check the validity of the columns in projection 
-                for (int i = 0; i < projection.length; ++i) {
-                    if (!sAppReadableColumnsSet.contains(projection[i]) &&
-                            !downloadManagerColumnsList.contains(projection[i])) {
-                        throw new IllegalArgumentException(
-                                "column " + projection[i] + " is not allowed in queries");
-                    }
-                }
-            }
-
-            for (int i = 0; i < projection.length; i++) {
-                final String newColumn = sColumnsMap.get(projection[i]);
-                if (newColumn != null) {
-                    projection[i] = newColumn;
-                }
-            }
-        }
-
         if (Constants.LOGVV) {
             logVerboseQueryInfo(projection, selection, selectionArgs, sort, db);
         }
@@ -1418,26 +1598,11 @@ public final class DownloadProvider extends ContentProvider {
     }
 
     /**
-     * @return true if we should restrict the columns readable by this caller
-     */
-    private boolean shouldRestrictVisibility() {
-        int callingUid = Binder.getCallingUid();
-        return Binder.getCallingPid() != Process.myPid()
-                && callingUid != mSystemUid
-                && callingUid != Process.SHELL_UID
-                && callingUid != Process.ROOT_UID;
-    }
-
-    /**
      * Updates a row in the database
      */
     @Override
     public int update(final Uri uri, final ContentValues values,
             final String where, final String[] whereArgs) {
-        if (shouldRestrictVisibility()) {
-            Helpers.validateSelection(where, sAppReadableColumnsSet);
-        }
-
         final Context context = getContext();
         final ContentResolver resolver = context.getContentResolver();
 
@@ -1463,6 +1628,7 @@ public final class DownloadProvider extends ContentProvider {
             copyString(Downloads.Impl.COLUMN_MEDIAPROVIDER_URI, values, filteredValues);
             copyString(Downloads.Impl.COLUMN_DESCRIPTION, values, filteredValues);
             copyInteger(Downloads.Impl.COLUMN_DELETED, values, filteredValues);
+            copyInteger(Downloads.Impl.COLUMN_STATUS, values, filteredValues);
         } else {
             filteredValues = values;
             String filename = values.getAsString(Downloads.Impl._DATA);
@@ -1486,13 +1652,25 @@ public final class DownloadProvider extends ContentProvider {
             }
 
             Integer status = values.getAsInteger(Downloads.Impl.COLUMN_STATUS);
-            boolean isRestart = status != null && status == Downloads.Impl.STATUS_PENDING;
+            boolean isRestart = status != null && (status == Downloads.Impl.STATUS_PENDING
+                    || status == Downloads.Impl.STATUS_CONFIRMED_NETWORK) ;
             boolean isUserBypassingSizeLimit =
                 values.containsKey(Downloads.Impl.COLUMN_BYPASS_RECOMMENDED_SIZE_LIMIT);
             if (isRestart || isUserBypassingSizeLimit) {
                 updateSchedule = true;
             }
             isCompleting = status != null && Downloads.Impl.isStatusCompleted(status);
+        }
+
+        isNetworkConfirmedUpdate = false;
+        Integer status = values.getAsInteger(Downloads.Impl.COLUMN_STATUS);
+        if (status != null) {
+            Log.d(Constants.TAG, "update uri: " + uri + "  status: " + status
+                    + "  updateSchedule: " + updateSchedule);
+            if (Downloads.Impl.STATUS_CONFIRMED_NETWORK == status) {
+                isNetworkConfirmedUpdate = true;
+                filteredValues.put(Downloads.Impl.COLUMN_STATUS, Downloads.Impl.STATUS_PENDING);
+            }
         }
 
         int match = sURIMatcher.match(uri);
@@ -1558,7 +1736,9 @@ public final class DownloadProvider extends ContentProvider {
                             }
                         }
                         if (updateSchedule) {
-                            Helpers.scheduleJob(context, info);
+                            Log.d(Constants.TAG, "update scheduleJob id: " + info.mId);
+                            scheduleJob(getContext(), info.mId, filteredValues.getAsInteger(
+                                    Downloads.Impl.COLUMN_STATUS));
                         }
                         if (isCompleting) {
                             info.sendIntentIfRequested();
@@ -1576,6 +1756,50 @@ public final class DownloadProvider extends ContentProvider {
 
         notifyContentChanged(uri, match);
         return count;
+    }
+
+    private boolean scheduleJob(Context context, long downloadId, int status) {
+        if (!DownloadManager.isDownloadAlertEnabled()) {
+            Helpers.scheduleJob(context, (int)downloadId);
+            return true;
+        }
+
+        Log.d(Constants.TAG, "scheduleJob id: " + downloadId + " status: " + status);
+        DownloadInfo downloadInfo = DownloadInfo.queryDownloadInfo(context, downloadId);
+        if (downloadInfo == null) {
+            Log.w(Constants.TAG, "scheduleJob downloadInfo is null!");
+            return false;
+        }
+        ConnectivityManager cm  =
+            (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        final NetworkInfo netInfo = cm.getActiveNetworkInfo();
+        if (netInfo == null) {
+            Log.d(Constants.TAG, "scheduleJob netinfo is null");
+            if (status == Downloads.Impl.STATUS_PENDING) {
+                Helpers.pauseDownloadForNetConfirm(context, downloadId);
+            }
+            return false;
+        } else {
+            final boolean isMetered = cm.isNetworkTypeMobile(netInfo.getType());
+            Log.d(Constants.TAG, "scheduleJob id: " + downloadId + " isMetered: " +
+                    isMetered + " isNetworkConfirmedUpdate: " + isNetworkConfirmedUpdate);
+            if (isMetered && !isNetworkConfirmedUpdate) {
+                switch (status) {
+                    case Downloads.Impl.STATUS_PENDING:
+                        Helpers.pauseDownloadForNetConfirm(context, downloadId);
+                        Helpers.showDownloadConfirmDialog(context);
+                        return false;
+                    case Downloads.Impl.STATUS_SUCCESS:
+                        Helpers.scheduleJob(context, (int)downloadId);
+                        return false;
+                    default:
+                        return false;
+                }
+            } else {
+                Helpers.scheduleJob(context, (int)downloadId);
+                return true;
+            }
+        }
     }
 
     /**
@@ -1602,6 +1826,8 @@ public final class DownloadProvider extends ContentProvider {
      */
     private SQLiteQueryBuilder getQueryBuilder(final Uri uri, int match) {
         final String table;
+        final Map<String, String> projectionMap;
+
         final StringBuilder where = new StringBuilder();
         switch (match) {
             // The "my_downloads" view normally limits the caller to operating
@@ -1612,6 +1838,7 @@ public final class DownloadProvider extends ContentProvider {
                 // fall-through
             case MY_DOWNLOADS:
                 table = DB_TABLE;
+                projectionMap = sDownloadsMap;
                 if (getContext().checkCallingOrSelfPermission(
                         PERMISSION_ACCESS_ALL) != PackageManager.PERMISSION_GRANTED) {
                     appendWhereExpression(where, Constants.UID + "=" + Binder.getCallingUid()
@@ -1627,6 +1854,7 @@ public final class DownloadProvider extends ContentProvider {
                 // fall-through
             case ALL_DOWNLOADS:
                 table = DB_TABLE;
+                projectionMap = sDownloadsMap;
                 break;
 
             // Headers are limited to callers holding the ACCESS_ALL_DOWNLOADS
@@ -1634,6 +1862,7 @@ public final class DownloadProvider extends ContentProvider {
             case MY_DOWNLOADS_ID_HEADERS:
             case ALL_DOWNLOADS_ID_HEADERS:
                 table = Downloads.Impl.RequestHeaders.HEADERS_DB_TABLE;
+                projectionMap = sHeadersMap;
                 appendWhereExpression(where, Downloads.Impl.RequestHeaders.COLUMN_DOWNLOAD_ID + "="
                         + getDownloadIdFromUri(uri));
                 break;
@@ -1643,8 +1872,11 @@ public final class DownloadProvider extends ContentProvider {
         }
 
         final SQLiteQueryBuilder qb = new SQLiteQueryBuilder();
-        qb.setStrict(true);
         qb.setTables(table);
+        qb.setProjectionMap(projectionMap);
+        qb.setStrict(true);
+        qb.setStrictColumns(true);
+        qb.setStrictGrammar(true);
         qb.appendWhere(where);
         return qb;
     }
@@ -1661,10 +1893,6 @@ public final class DownloadProvider extends ContentProvider {
      */
     @Override
     public int delete(final Uri uri, final String where, final String[] whereArgs) {
-        if (shouldRestrictVisibility()) {
-            Helpers.validateSelection(where, sAppReadableColumnsSet);
-        }
-
         final Context context = getContext();
         final ContentResolver resolver = context.getContentResolver();
         final JobScheduler scheduler = context.getSystemService(JobScheduler.class);

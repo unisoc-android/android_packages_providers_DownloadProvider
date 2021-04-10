@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+<string name="app_label">"Gerenciador de Download"</string>
+<string name="storage_description">"Downloads"</string>
+<string name="permlab_downloadManager">"Acessar o gestor de downloads."</string>
+<string name="permdesc_downloadManager">"Permite que o aplicativo acesse o gerenciador de downloads e o use para baixar arquivos. Aplicativos maliciosos podem usá-las para interromper downloads e acessar informações privadas."</string>
+<string name="permlab_downloadManagerAdvanced">"Funções avançadas do gerenciador de download."</string>
+<string name="permdesc_downloadManagerAdvanced">"Permite que o aplicativo acesse as funções avançadas do gerenciador de downloads. Aplicativos maliciosos podem usá-las para interromper downloads e acessar informações privadas."</string>
+<string name="permlab_downloadCompletedIntent">"Enviar as notificações baixadas."</string>
+<string name="permdesc_downloadCompletedIntent">"Permite que o aplicativo envie notificações sobre downloads concluídos. Aplicativos maliciosos podem usá-las  para confundir outros aplicativos que baixam arquivos."</string>
+<string name="permlab_downloadCacheNonPurgeable">"Reservar o espaço no cache de download"</string>
+<string name="permdesc_downloadCacheNonPurgeable">"Permite que o aplicativo transfira arquivos para o cache de download, que não pode ser excluído automaticamente quando o gerenciador de downloads precisar de mais espaço."</string>
+<string name="permlab_downloadWithoutNotification">"Baixar os arquivos sem notificação."</string>
+<string name="permdesc_downloadWithoutNotification">Msgstr "Permite que o aplicativo faça o download de arquivos através do gerenciador de downloads sem que nenhuma notificação seja mostrada ao usuário."</string>
+<string name="permlab_accessAllDownloads">"Acessar todos os downloads do sistema"</string>
+<string name="permdesc_accessAllDownloads">"Permite que o aplicativo exiba e modifique todos os downloads iniciados por qualquer aplicativo no sistema."</string>
+<string name="download_unknown_title">"&lt;Sem título&gt;"</string>
+<string name="notification_download_complete">"Download completo."</string>
+<string name="notification_download_failed">"Falha no download."</string>
+<string name="notification_need_wifi_for_size">"O tamanho do download requer Wi-Fi."</string>
+<string name="notification_paused_in_background">"Pausado em segundo plano."</string>
+<string name="wifi_required_title">"Arquivo grande demais para baixar nesta rede "</string>
+<string name="wifi_required_body">"Você deve usar o Wi-Fi para concluir este download de <xliff:g id="size" example="12.3KB">%1$s </xliff:g>. \n\nToque em <xliff:g id="queue_text" example="Queue">%2$s </xliff:g> para iniciar este download da próxima vez que se conectar a uma rede Wi-Fi."</string>
+<string name="wifi_recommended_title">"Fila para download mais tarde?"</string>
+<string name="wifi_recommended_body">"Iniciar esse download de <xliff:g id="size" example="12.3KB">%1$s </xliff:g> agora pode reduzir a vida útil da bateria e/ou resultar no uso excessivo de sua conexão de dados móveis, o que pode levar a cobranças por parte da operadora de celular, dependendo do seu plano de dados.\n\n Toque em <xliff:g id="queue_text" example="Queue">%2$s</xliff:g> para iniciar este download da próxima vez que se conectar a uma rede Wi-Fi."</string>
+<string name="button_queue_for_wifi">"Alinhar"</string>
+<string name="button_cancel_download">"Cancelar"</string>
+<string name="button_start_now">"Iniciar agora"</string>
+<plurals name="notif_summary_active">
+<item quantity="one">"1 arquivo sendo baixado"</item>
+<item quantity="other">"<xliff:g id="number">%d</xliff:g> arquivos baixando"</item>
+</plurals>
+<plurals name="notif_summary_waiting">
+<item quantity="one">"1 arquivo aguardando"</item>
+<item quantity="other">"<xliff:g id="number">%d</xliff:g> arquivos aguardando"</item>
+</plurals>
+<string name="download_remaining">"<xliff:g id="duration" example="3 minutes">%s</xliff:g> deixado"</string>
+<string name="download_no_application_title">"Não é possível abrir o arquivo"</string>
+<string name="root_downloads">"Downloads"</string>
+<string name="download_queued">"Alinhado"</string>
+<string name="download_running">"Em andamento"</string>
+<string name="download_error">"Falha"</string>
+<string name="download_running_percent">"Em progresso, <xliff:g id="percentage" example="50%">%s</xliff:g>"</string>
+<string name="download_paused">"Pausado"</string>
+<string name="download_confirm_msg">"Fazer o download pela rede de dados consumirá dados. Continuar?"</string>
+</resources>

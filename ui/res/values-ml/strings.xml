@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"എല്ലാം തിരഞ്ഞെടുക്കുക"</string>
     <string name="selected_count" msgid="2101564570019753277">"<xliff:g id="NUMBER">%1$d</xliff:g> / <xliff:g id="TOTAL">%2$d</xliff:g> എണ്ണം തിരഞ്ഞെടുത്തു"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"ഇതുവഴി പങ്കിടുക"</string>
+    <string-array name="download_pause_entries">
+      <item>"വിരാമം"</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+      <item>"സംഗ്രഹം"</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"പോസിങ്ങിലാണ്, ദയവായി പിന്നീട് വീണ്ടും ശ്രമിക്കുക.... "</string>
 </resources>

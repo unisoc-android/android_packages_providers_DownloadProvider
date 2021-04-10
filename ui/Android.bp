@@ -22,7 +22,10 @@ android_app {
         ":download_provider-files",
         "src/**/*.java",
     ],
-
+    aaptflags: [
+        "--extra-packages",
+        "com.android.providers.downloads",
+    ],
     resource_dirs: [
         "res",
     ],

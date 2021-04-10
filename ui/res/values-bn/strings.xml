@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"সবগুলি বেছে নিন"</string>
     <string name="selected_count" msgid="2101564570019753277">"<xliff:g id="TOTAL">%2$d</xliff:g>টির মধ্যে <xliff:g id="NUMBER">%1$d</xliff:g>টি নির্বাচিত"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"এর মাধ্যমে শেয়ার করুন"</string>
+    <string-array name="download_pause_entries">
+      <item>বিরতি</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+     <item>পুনরায় শুরু করুন</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"বিরত আছে, পরে চেষ্টা করুন..."</string>
 </resources>

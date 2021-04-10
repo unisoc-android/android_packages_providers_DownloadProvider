@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"সকলো বাছনি কৰক"</string>
     <string name="selected_count" msgid="2101564570019753277">"<xliff:g id="TOTAL">%2$d</xliff:g>ৰ ভিতৰত <xliff:g id="NUMBER">%1$d</xliff:g>টা বাছনি কৰা হ’ল"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"ইয়াৰ জৰিয়তে শ্বেয়াৰ কৰক"</string>
+    <string-array name="download_pause_entries">
+      <item>"স্তব্ধ"</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+      <item>"ৰেজ্য়ুম"</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"বিৰামত আছে, অনুগ্ৰহ কৰি পিছত পুনৰ চেষ্টা কৰিব..."</string>
 </resources>

@@ -22,6 +22,8 @@ import static android.provider.Downloads.Impl.COLUMN_CONTROL;
 import static android.provider.Downloads.Impl.COLUMN_DELETED;
 import static android.provider.Downloads.Impl.COLUMN_STATUS;
 import static android.provider.Downloads.Impl.CONTROL_PAUSED;
+import static android.provider.Downloads.Impl.CONTROL_RUN;
+import static android.provider.Downloads.Impl.CONTROL_PAUSED_BY_APP;
 import static android.provider.Downloads.Impl.STATUS_BAD_REQUEST;
 import static android.provider.Downloads.Impl.STATUS_CANCELED;
 import static android.provider.Downloads.Impl.STATUS_CANNOT_RESUME;
@@ -50,13 +52,15 @@ import static java.net.HttpURLConnection.HTTP_PRECON_FAILED;
 import static java.net.HttpURLConnection.HTTP_SEE_OTHER;
 import static java.net.HttpURLConnection.HTTP_UNAVAILABLE;
 
+import android.app.DownloadManager;
 import android.app.job.JobParameters;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
-import android.drm.DrmManagerClient;
+import android.drm.DrmManagerClientEx;
 import android.drm.DrmOutputStream;
 import android.net.ConnectivityManager;
+import android.net.ConnectivityManager.NetworkCallback;
 import android.net.INetworkPolicyListener;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -93,6 +97,12 @@ import java.security.GeneralSecurityException;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
+/*
+ * for downloadprovider_DRM
+ *@{
+ */
+import com.android.providers.downloadsplugin.DownloadsDRMUtils;
+/*@}*/
 
 /**
  * Task which executes a given {@link DownloadInfo}: making network requests,
@@ -133,16 +143,19 @@ public class DownloadThread extends Thread {
      * fields are tracked in {@link #mInfoDelta}. If a field exists in
      * {@link #mInfoDelta}, it must not be read from {@link #mInfo}.
      */
-    private final DownloadInfo mInfo;
-    private final DownloadInfoDelta mInfoDelta;
+    public final DownloadInfo mInfo;
+    public final DownloadInfoDelta mInfoDelta;
 
     private volatile boolean mPolicyDirty;
+    private final boolean mIsDownloadAlertEnabled;
+    private final ConnectivityManager mConnManager;
+    public boolean mToNetConfirm;
 
     /**
      * Local changes to {@link DownloadInfo}. These are kept local to avoid
      * racing with the thread that updates based on change notifications.
      */
-    private class DownloadInfoDelta {
+    public class DownloadInfoDelta {
         public String mUri;
         public String mFileName;
         public String mMimeType;
@@ -154,11 +167,12 @@ public class DownloadThread extends Thread {
         public String mETag;
 
         public String mErrorMsg;
+        public int mControl;
 
         private static final String NOT_CANCELED = COLUMN_STATUS + " != '" + STATUS_CANCELED + "'";
         private static final String NOT_DELETED = COLUMN_DELETED + " == '0'";
         private static final String NOT_PAUSED = "(" + COLUMN_CONTROL + " IS NULL OR "
-                + COLUMN_CONTROL + " != '" + CONTROL_PAUSED + "')";
+                + COLUMN_CONTROL + " == '" + CONTROL_RUN + "')";
 
         private static final String SELECTION_VALID = NOT_CANCELED + " AND " + NOT_DELETED + " AND "
                 + NOT_PAUSED;
@@ -173,6 +187,7 @@ public class DownloadThread extends Thread {
             mTotalBytes = info.mTotalBytes;
             mCurrentBytes = info.mCurrentBytes;
             mETag = info.mETag;
+            mControl = info.mControl;
         }
 
         private ContentValues buildContentValues() {
@@ -181,7 +196,12 @@ public class DownloadThread extends Thread {
             values.put(Downloads.Impl.COLUMN_URI, mUri);
             values.put(Downloads.Impl._DATA, mFileName);
             values.put(Downloads.Impl.COLUMN_MIME_TYPE, mMimeType);
-            values.put(Downloads.Impl.COLUMN_STATUS, mStatus);
+            if(mToNetConfirm && !Downloads.Impl.isStatusCompleted(mStatus)){
+                logDebug("buildContentValues, skip writing status into database for netconfirm");
+            } else {
+                values.put(Downloads.Impl.COLUMN_STATUS, mStatus);
+                values.put(Downloads.Impl.COLUMN_CONTROL, mControl);
+            }
             values.put(Downloads.Impl.COLUMN_FAILED_CONNECTIONS, mNumFailed);
             values.put(Constants.RETRY_AFTER_X_REDIRECT_COUNT, mRetryAfter);
             values.put(Downloads.Impl.COLUMN_TOTAL_BYTES, mTotalBytes);
@@ -207,9 +227,12 @@ public class DownloadThread extends Thread {
          * that we haven't been paused or deleted.
          */
         public void writeToDatabaseOrThrow() throws StopRequestException {
-            if (mContext.getContentResolver().update(mInfo.getAllDownloadsUri(),
-                    buildContentValues(), SELECTION_VALID, null) == 0) {
-                if (mInfo.queryDownloadControl() == CONTROL_PAUSED) {
+            int count = 0;
+            count = mContext.getContentResolver().update(mInfo.getAllDownloadsUri(),
+                buildContentValues(), SELECTION_VALID, null);
+            if (count == 0) {
+                int control = mInfo.queryDownloadControl();
+                if ( control== CONTROL_PAUSED || control == CONTROL_PAUSED_BY_APP) {
                     throw new StopRequestException(STATUS_PAUSED_BY_APP, "Download paused!");
                 } else {
                     throw new StopRequestException(STATUS_CANCELED, "Download deleted or missing!");
@@ -258,6 +281,10 @@ public class DownloadThread extends Thread {
         mId = info.mId;
         mInfo = info;
         mInfoDelta = new DownloadInfoDelta(info);
+
+        mConnManager = mContext.getSystemService(ConnectivityManager.class);
+        mIsDownloadAlertEnabled = DownloadManager.isDownloadAlertEnabled();
+        mToNetConfirm = false;
     }
 
     @Override
@@ -272,6 +299,9 @@ public class DownloadThread extends Thread {
         }
 
         try {
+            if (mIsDownloadAlertEnabled) {
+                mConnManager.registerDefaultNetworkCallback(mNetworkCallback);
+            }
             // while performing download, register for rules updates
             mNetworkPolicy.registerListener(mPolicyListener);
 
@@ -339,9 +369,21 @@ public class DownloadThread extends Thread {
                     mInfoDelta.mNumFailed += 1;
                 }
 
+                final NetworkInfo info = mSystemFacade.getNetworkInfo(mNetwork, mInfo.mUid,
+                        mIgnoreBlocked);
+                if (mIsDownloadAlertEnabled) {
+                    logDebug("StopRequestException  mToNetConfirm: " + mToNetConfirm
+                            + ", old networkType: " + mNetworkType
+                            + ", new networkInfo: " + info);
+                    if (!mToNetConfirm && !ConnectivityManager.isNetworkTypeMobile(mNetworkType)) {
+                        if ((info == null) || (info.getType() != mNetworkType)) {
+                            mToNetConfirm = true;
+                            logDebug("StopRequestException  mToNetConfirm set true");
+                        }
+                    }
+                }
+
                 if (mInfoDelta.mNumFailed < Constants.MAX_RETRIES) {
-                    final NetworkInfo info = mSystemFacade.getNetworkInfo(mNetwork, mInfo.mUid,
-                            mIgnoreBlocked);
                     if (info != null && info.getType() == mNetworkType && info.isConnected()) {
                         // Underlying network is still intact, use normal backoff
                         mInfoDelta.mStatus = STATUS_WAITING_TO_RETRY;
@@ -350,8 +392,17 @@ public class DownloadThread extends Thread {
                         mInfoDelta.mStatus = STATUS_WAITING_FOR_NETWORK;
                     }
 
+                    /*
+                     * for downloadprovider_DRM
+                     * original code
+                     if ((mInfoDelta.mETag == null && mMadeProgress)
+                             || DownloadDrmHelper.isDrmConvertNeeded(mInfoDelta.mMimeType)) {
+                     *@{
+                     */
                     if ((mInfoDelta.mETag == null && mMadeProgress)
-                            || DownloadDrmHelper.isDrmConvertNeeded(mInfoDelta.mMimeType)) {
+                            || (DownloadDrmHelper.isDrmConvertNeeded(mInfoDelta.mMimeType)
+                            && !DownloadsDRMUtils.getInstance(mContext).isSupportDRM())) {
+                    /*@}*/
                         // However, if we wrote data and have no ETag to verify
                         // contents against later, we can't actually resume.
                         mInfoDelta.mStatus = STATUS_CANNOT_RESUME;
@@ -364,6 +415,15 @@ public class DownloadThread extends Thread {
             if (mInfoDelta.mStatus == STATUS_WAITING_FOR_NETWORK
                     && !mInfo.isMeteredAllowed(mInfoDelta.mTotalBytes)) {
                 mInfoDelta.mStatus = STATUS_QUEUED_FOR_WIFI;
+            }
+            if (mInfoDelta.mStatus == STATUS_PAUSED_BY_APP) {
+                mInfoDelta.mControl = CONTROL_PAUSED_BY_APP;
+            } else if (!Downloads.Impl.isStatusCompleted(mInfoDelta.mStatus)) {
+                mInfo.mStatus = mInfo.queryDownloadStatus();
+                if (mInfo.mStatus == STATUS_PAUSED_BY_APP) {
+                    mInfoDelta.mStatus = mInfo.mStatus;
+                    mInfoDelta.mControl = CONTROL_PAUSED_BY_APP;
+                }
             }
 
         } catch (Throwable t) {
@@ -379,19 +439,34 @@ public class DownloadThread extends Thread {
 
             finalizeDestination();
 
+            if (!isFinalStatusRetryable(mInfoDelta.mStatus)
+                    && mInfoDelta.mControl != CONTROL_PAUSED_BY_APP){
+                mInfoDelta.mControl = CONTROL_PAUSED;
+            }
             mInfoDelta.writeToDatabase();
 
             TrafficStats.clearThreadStatsTag();
             TrafficStats.clearThreadStatsUid();
 
+            /*
+             * for downloadprovider_DRM
+             *@{
+             */
+            DownloadsDRMUtils.getInstance(mContext).notifyDownloadCompleted(
+                    this, mContext, mInfoDelta);
+            /*@}*/
+
+            if (mIsDownloadAlertEnabled) {
+                mConnManager.unregisterNetworkCallback(mNetworkCallback);
+            }
             mNetworkPolicy.unregisterListener(mPolicyListener);
         }
 
         boolean needsReschedule = false;
-        if (mInfoDelta.mStatus == STATUS_WAITING_TO_RETRY
-                || mInfoDelta.mStatus == STATUS_WAITING_FOR_NETWORK
-                || mInfoDelta.mStatus == STATUS_QUEUED_FOR_WIFI) {
-            needsReschedule = true;
+        if (isFinalStatusRetryable(mInfoDelta.mStatus)) {
+            if (!mToNetConfirm) {
+                needsReschedule = true;
+            }
         }
 
         mJobService.jobFinishedInternal(mParams, needsReschedule);
@@ -543,7 +618,7 @@ public class DownloadThread extends Thread {
                     STATUS_CANNOT_RESUME, "can't know size of download, giving up");
         }
 
-        DrmManagerClient drmClient = null;
+        DrmManagerClientEx drmClient = null;
         ParcelFileDescriptor outPfd = null;
         FileDescriptor outFd = null;
         InputStream in = null;
@@ -560,8 +635,16 @@ public class DownloadThread extends Thread {
                         .openFileDescriptor(mInfo.getAllDownloadsUri(), "rw");
                 outFd = outPfd.getFileDescriptor();
 
-                if (DownloadDrmHelper.isDrmConvertNeeded(mInfoDelta.mMimeType)) {
-                    drmClient = new DrmManagerClient(mContext);
+                /*
+                 * for downloadprovider_DRM
+                 * original code
+                 if (DownloadDrmHelper.isDrmConvertNeeded(mInfoDelta.mMimeType)) {
+                 *@{
+                 */
+                if (DownloadDrmHelper.isDrmConvertNeeded(mInfoDelta.mMimeType)
+                        && (!DownloadsDRMUtils.getInstance(mContext).isSupportDRM())) {
+                /*@}*/
+                    drmClient = new DrmManagerClientEx(mContext);
                     out = new DrmOutputStream(drmClient, outPfd, mInfoDelta.mMimeType);
                 } else {
                     out = new ParcelFileDescriptor.AutoCloseOutputStream(outPfd);
@@ -827,8 +910,9 @@ public class DownloadThread extends Thread {
         }
 
         // Only splice in user agent when not already defined
-        if (conn.getRequestProperty("User-Agent") == null) {
-            conn.addRequestProperty("User-Agent", mInfo.getUserAgent());
+        if ((conn.getRequestProperty("User-Agent") == null)
+            || (conn.getRequestProperty("User-Agent").length() <= 0)) {
+            conn.setRequestProperty("User-Agent", mInfo.getUserAgent());
         }
 
         // Defeat transparent gzip compression, since it doesn't allow us to
@@ -912,4 +996,31 @@ public class DownloadThread extends Thread {
                 return false;
         }
     }
+
+    private boolean isFinalStatusRetryable(int status) {
+        boolean result;
+        switch (status) {
+            case STATUS_WAITING_TO_RETRY:
+            case STATUS_WAITING_FOR_NETWORK:
+            case STATUS_QUEUED_FOR_WIFI:
+                result = true;
+                break;
+            default:
+                result = false;
+                break;
+        }
+        return result;
+    }
+
+    private NetworkCallback mNetworkCallback = new NetworkCallback() {
+        @Override
+        public void onLost(Network network) {
+            int networkType = network.networkType;
+            logDebug("onLost  networkType: " + networkType);
+            if (!ConnectivityManager.isNetworkTypeMobile(networkType)) {
+                 logDebug("onLost  mToNetConfirm set true");
+                 mToNetConfirm = true;
+            }
+        }
+    };
 }

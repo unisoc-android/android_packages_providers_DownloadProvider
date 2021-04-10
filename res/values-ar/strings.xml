@@ -65,4 +65,6 @@
     <string name="download_running" msgid="3925050393361158266">"قيد التقدم"</string>
     <string name="download_error" msgid="5144180777324573236">"تعذّر الاتصال بالشبكة"</string>
     <string name="download_running_percent" msgid="4305080769167320204">"قيد التقدّم، <xliff:g id="PERCENTAGE">%s</xliff:g>"</string>
+    <string name="download_paused">إيقاف مؤقت</string>
+    <string name="download_confirm_msg">"سيؤدي التنزيل باستخدام شبكة الجوّال إلى استهلاك البيانات. هل تريد المتابعة؟"</string>
 </resources>

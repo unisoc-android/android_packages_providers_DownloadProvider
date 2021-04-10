@@ -56,6 +56,7 @@
     <uses-permission android:name="android.permission.CLEAR_APP_CACHE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.UPDATE_APP_OPS_STATS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND"/>
 
     <application android:process="android.process.media"
@@ -117,5 +118,18 @@
                 <data android:scheme="file" />
             </intent-filter>
         </receiver>
+
+        <activity
+            android:name=".DownloadConfirmActivity"
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:finishOnCloseSystemDialogs="true"
+            android:resizeableActivity="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.downloads.action.DOWNLOAD_TO_CONFIRME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

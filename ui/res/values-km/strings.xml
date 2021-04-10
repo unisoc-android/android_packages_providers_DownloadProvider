@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"ជ្រើសរើសទាំងអស់"</string>
     <string name="selected_count" msgid="2101564570019753277">"បាន​ជ្រើស <xliff:g id="NUMBER">%1$d</xliff:g> ក្នុង​ចំណោម <xliff:g id="TOTAL">%2$d</xliff:g>"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"ចែករំលែក​តាម"</string>
+    <string-array name="download_pause_entries">
+      <item>"ផ្អាក"</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+      <item>"បន្ត"</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">កំពុងតែធ្វើការផ្អាក សូមសាកល្បងម្តងទៀតនៅពេលក្រោយ…</string>
 </resources>

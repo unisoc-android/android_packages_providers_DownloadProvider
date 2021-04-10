@@ -120,5 +120,11 @@
     <!-- title shown when displaying list of apps to choose from when share is clicked on
         [CHAR LIMIT = 20] -->
     <string name="download_share_dialog">Share via</string>
-
+    <string-array name="download_pause_entries">
+        <item>Pause</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+        <item>Resume</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">In pausing, please try again later...</string>
 </resources>

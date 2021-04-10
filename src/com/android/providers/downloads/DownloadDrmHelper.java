@@ -32,6 +32,8 @@ public class DownloadDrmHelper {
 
     public static final String EXTENSION_INTERNAL_FWDL = ".fl";
 
+    public static final String DRM_CONTENT_TYPE = "application/vnd.oma.drm.content";
+    public static final String DRM_CONVERT_TYPE = "application/vnd.oma.drm.convert";
     /**
      * Checks if the Media Type needs to be DRM converted
      *

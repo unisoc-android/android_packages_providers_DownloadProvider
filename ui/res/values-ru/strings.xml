@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"Выбрать все"</string>
     <string name="selected_count" msgid="2101564570019753277">"<xliff:g id="NUMBER">%1$d</xliff:g> из <xliff:g id="TOTAL">%2$d</xliff:g>"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"Способ отправки"</string>
+    <string-array name="download_pause_entries">
+      <item>Пауза</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+      <item>резюме</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"В режиме приостановки, пожалуйста, повторите попытку позже..."</string>
 </resources>

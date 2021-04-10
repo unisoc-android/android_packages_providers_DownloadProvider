@@ -48,4 +48,11 @@
     <string name="select_all" msgid="634074918366265804">"အားလုံးရွေးချယ်ရန်"</string>
     <string name="selected_count" msgid="2101564570019753277">"<xliff:g id="NUMBER">%1$d</xliff:g> ထဲမှ <xliff:g id="TOTAL">%2$d</xliff:g> ရွေးချယ်ပြီး"</string>
     <string name="download_share_dialog" msgid="3355867339806448955">"မှတစ်ဆင့် မျှဝေပါ"</string>
+    <string-array name="download_pause_entries">
+      <item>ခဏရပ္</item>
+    </string-array>
+    <string-array name="download_resum_entries">
+      <item>ဆက္လက္</item>
+    </string-array>
+    <string name="dialog_wait_and_retry">"ခဏရပ်သွားသည်၊ နောက်မှ ထပ်ကြိုးစားပါ..."</string>
 </resources>

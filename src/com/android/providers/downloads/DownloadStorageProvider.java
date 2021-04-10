@@ -31,10 +31,12 @@ import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.UriPermission;
+import android.content.res.AssetFileDescriptor;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.database.MatrixCursor.RowBuilder;
 import android.media.MediaFile;
+import android.graphics.Point;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
@@ -56,6 +58,7 @@ import android.util.Pair;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.content.FileSystemProvider;
+
 
 import libcore.io.IoUtils;
 
@@ -94,6 +97,9 @@ public class DownloadStorageProvider extends FileSystemProvider {
             Document.COLUMN_SIZE,
     };
 
+    private static final String[] EXT_DEFAULT_DOCUMENT_PROJECTION =
+            append(DownloadManager.UNDERLYING_COLUMNS, Constants.COLUMN_ORIGINAL_MIME_TYPE);
+
     private DownloadManager mDm;
 
     private static final int NO_LIMIT = -1;
@@ -106,6 +112,14 @@ public class DownloadStorageProvider extends FileSystemProvider {
         mDm.setAccessFilename(true);
 
         return true;
+    }
+
+    private static String[] append(String[] arr, String str) {
+        int size = arr.length;
+        String[] tmp = new String[size + 1];
+        System.arraycopy(arr, 0, tmp, 0, size);
+        tmp[size] = str;
+        return tmp;
     }
 
     private static String[] resolveRootProjection(String[] projection) {
@@ -146,7 +160,8 @@ public class DownloadStorageProvider extends FileSystemProvider {
         for (int i = 0; i < size; ++i) {
             final Uri uri = uriPermissions.get(i).getUri();
             if (AUTHORITY.equals(uri.getAuthority())
-                    && isMediaStoreDownload(DocumentsContract.getDocumentId(uri))) {
+                    && isMediaStoreDownload(DocumentsContract.isTreeUri(uri) ?
+                           DocumentsContract.getTreeDocumentId(uri) : DocumentsContract.getDocumentId(uri))) {
                 context.revokeUriPermission(uri, ~0);
                 sb.append(uri + ",");
             }
@@ -201,19 +216,25 @@ public class DownloadStorageProvider extends FileSystemProvider {
             throws FileNotFoundException {
         // Delegate to real provider
         final long token = Binder.clearCallingIdentity();
+        Cursor cursor = null;
         try {
             String newDocumentId = super.createDocument(parentDocId, mimeType, displayName);
             if (!Document.MIME_TYPE_DIR.equals(mimeType)
                     && !RawDocumentsHelper.isRawDocId(parentDocId)
                     && !isMediaStoreDownload(parentDocId)) {
                 File newFile = getFileForDocId(newDocumentId);
-                newDocumentId = Long.toString(mDm.addCompletedDownload(
-                        newFile.getName(), newFile.getName(), true, mimeType,
-                        newFile.getAbsolutePath(), 0L,
-                        false, true));
+                cursor = getContext().getContentResolver().query(Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI,
+                    null, Downloads.Impl._DATA + "=?", new String[] { newFile.getAbsolutePath() }, null);
+                if(cursor != null && cursor.getCount() == 0) {
+                    newDocumentId = Long.toString(mDm.addCompletedDownload(
+                            newFile.getName(), newFile.getName(), true, mimeType,
+                            newFile.getAbsolutePath(), 0L,
+                            false, true));
+               }
             }
             return newDocumentId;
         } finally {
+            IoUtils.closeQuietly(cursor);
             Binder.restoreCallingIdentity(token);
         }
     }
@@ -264,6 +285,48 @@ public class DownloadStorageProvider extends FileSystemProvider {
     }
 
     @Override
+    public AssetFileDescriptor openDocumentThumbnail(
+            String documentId, Point sizeHint, CancellationSignal signal)
+            throws FileNotFoundException {
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final File file = getFileForDocId(documentId);
+            final String mimeType =  getDocumentType(documentId);
+            if (mimeType != null && mimeType.startsWith("image/")) {
+                return DocumentsContract.openImageThumbnail(file);
+            }
+
+            if (mimeType != null && mimeType.startsWith("video/")) {
+                long mediaId = getMediaDocumentId(getFileForDocId(documentId, true).getAbsolutePath());
+                return openOrCreateVideoThumbnailCleared(mediaId, sizeHint, signal);
+            }
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        return null;
+    }
+
+    private long getMediaDocumentId(String filePath)
+            throws FileNotFoundException {
+        final ContentResolver resolver = getContext().getContentResolver();
+        Cursor cursor = null;
+        long id = 0;
+
+        try {
+            cursor = resolver.query(MediaStore.Files.getContentUri("external"),
+                         new String[] { "_id" }, MediaStore.Files.FileColumns.DATA + "=?",
+                         new String[] { filePath }, null);
+            if (cursor.getCount() > 0) {
+                cursor.moveToNext();
+                id = cursor.getLong(0);
+            }
+        } finally {
+            IoUtils.closeQuietly(cursor);
+        }
+        return id;
+    }
+
+    @Override
     public Cursor queryDocument(String docId, String[] projection) throws FileNotFoundException {
         // Delegate to real provider
         final long token = Binder.clearCallingIdentity();
@@ -286,7 +349,7 @@ public class DownloadStorageProvider extends FileSystemProvider {
                     includeDownloadFromMediaStore(result, cursor, null /* filePaths */);
                 }
             } else {
-                cursor = mDm.query(new Query().setFilterById(Long.parseLong(docId)));
+                cursor = mDm.query(new Query().setFilterById(Long.parseLong(docId)), EXT_DEFAULT_DOCUMENT_PROJECTION);
                 copyNotificationUri(result, cursor);
                 if (cursor.moveToFirst()) {
                     // We don't know if this queryDocument() call is from Downloads (manage)
@@ -338,11 +401,11 @@ public class DownloadStorageProvider extends FileSystemProvider {
                 assert (DOC_ID_ROOT.equals(parentDocId));
                 if (manage) {
                     cursor = mDm.query(
-                            new DownloadManager.Query().setOnlyIncludeVisibleInDownloadsUi(true));
+                            new DownloadManager.Query().setOnlyIncludeVisibleInDownloadsUi(true), EXT_DEFAULT_DOCUMENT_PROJECTION);
                 } else {
                     cursor = mDm.query(
                             new DownloadManager.Query().setOnlyIncludeVisibleInDownloadsUi(true)
-                                    .setFilterByStatus(DownloadManager.STATUS_SUCCESSFUL));
+                                    .setFilterByStatus(DownloadManager.STATUS_SUCCESSFUL), EXT_DEFAULT_DOCUMENT_PROJECTION);
                 }
                 final Set<String> filePaths = new HashSet<>();
                 while (cursor.moveToNext()) {
@@ -394,11 +457,15 @@ public class DownloadStorageProvider extends FileSystemProvider {
         final ArrayList<Uri> notificationUris = new ArrayList<>();
         try {
             cursor = mDm.query(new DownloadManager.Query().setOnlyIncludeVisibleInDownloadsUi(true)
-                    .setFilterByStatus(DownloadManager.STATUS_SUCCESSFUL));
+                    .setFilterByStatus(DownloadManager.STATUS_SUCCESSFUL), EXT_DEFAULT_DOCUMENT_PROJECTION);
             final Set<String> filePaths = new HashSet<>();
             while (cursor.moveToNext() && result.getCount() < limit) {
-                final String mimeType = cursor.getString(
-                        cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_MEDIA_TYPE));
+                String mimeType = cursor.getString(
+                    cursor.getColumnIndexOrThrow(Constants.COLUMN_ORIGINAL_MIME_TYPE));
+                if(mimeType == null) {
+                    mimeType = cursor.getString(
+                            cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_MEDIA_TYPE));
+                }
                 final String uri = cursor.getString(
                         cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_MEDIAPROVIDER_URI));
 
@@ -445,7 +512,7 @@ public class DownloadStorageProvider extends FileSystemProvider {
         Cursor cursor = null;
         try {
             cursor = mDm.query(new DownloadManager.Query().setOnlyIncludeVisibleInDownloadsUi(true)
-                    .setFilterByString(DocumentsContract.getSearchDocumentsQuery(queryArgs)));
+                    .setFilterByString(DocumentsContract.getSearchDocumentsQuery(queryArgs)), EXT_DEFAULT_DOCUMENT_PROJECTION);
             final Set<String> filePaths = new HashSet<>();
             while (cursor.moveToNext()) {
                 includeDownloadFromCursor(result, cursor, filePaths, queryArgs);
@@ -549,7 +616,6 @@ public class DownloadStorageProvider extends FileSystemProvider {
         if (RawDocumentsHelper.isRawDocId(docId)) {
             return new File(RawDocumentsHelper.getAbsoluteFilePath(docId));
         }
-
         if (isMediaStoreDownload(docId)) {
             return getFileForMediaStoreDownload(docId);
         }
@@ -562,7 +628,7 @@ public class DownloadStorageProvider extends FileSystemProvider {
         Cursor cursor = null;
         String localFilePath = null;
         try {
-            cursor = mDm.query(new Query().setFilterById(Long.parseLong(docId)));
+            cursor = mDm.query(new Query().setFilterById(Long.parseLong(docId)), EXT_DEFAULT_DOCUMENT_PROJECTION);
             if (cursor.moveToFirst()) {
                 localFilePath = cursor.getString(
                         cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_LOCAL_FILENAME));
@@ -571,7 +637,6 @@ public class DownloadStorageProvider extends FileSystemProvider {
             IoUtils.closeQuietly(cursor);
             Binder.restoreCallingIdentity(token);
         }
-
         if (localFilePath == null) {
             throw new IllegalStateException("File has no filepath. Could not be found.");
         }
@@ -618,10 +683,15 @@ public class DownloadStorageProvider extends FileSystemProvider {
         String summary = cursor.getString(
                 cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_DESCRIPTION));
         String mimeType = cursor.getString(
-                cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_MEDIA_TYPE));
+                cursor.getColumnIndexOrThrow(Constants.COLUMN_ORIGINAL_MIME_TYPE));
         if (mimeType == null) {
             // Provide fake MIME type so it's openable
-            mimeType = "vnd.android.document/file";
+            mimeType = cursor.getString(
+                cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_MEDIA_TYPE));
+            if(mimeType == null) {
+                // Provide fake MIME type so it's openable
+                mimeType = "vnd.android.document/file";
+            }
         }
 
         if (queryArgs != null) {
@@ -657,10 +727,14 @@ public class DownloadStorageProvider extends FileSystemProvider {
                 if (localFilePath == null || !new File(localFilePath).exists()) {
                     return;
                 }
-                extraFlags = Document.FLAG_SUPPORTS_RENAME;  // only successful is non-partial
+                if(!mimeType.equals(DownloadDrmHelper.DRM_CONVERT_TYPE)) {
+                    extraFlags = Document.FLAG_SUPPORTS_RENAME;  // only successful is non-partial
+                }
                 break;
             case DownloadManager.STATUS_PAUSED:
-                summary = getContext().getString(R.string.download_queued);
+            case DownloadManager.STATUS_WAITING_FOR_CONFIRM_NETWORK:
+            case DownloadManager.STATUS_CONFIRMED_NETWORK:
+                summary = getContext().getString(R.string.download_paused);
                 break;
             case DownloadManager.STATUS_PENDING:
                 summary = getContext().getString(R.string.download_queued);
@@ -702,7 +776,7 @@ public class DownloadStorageProvider extends FileSystemProvider {
             String mimeType, long lastModifiedMs, int extraFlags, boolean isPending) {
 
         int flags = Document.FLAG_SUPPORTS_DELETE | Document.FLAG_SUPPORTS_WRITE | extraFlags;
-        if (mimeType.startsWith("image/")) {
+        if (mimeType.startsWith("image/") || mimeType.startsWith("video/")) {
             flags |= Document.FLAG_SUPPORTS_THUMBNAIL;
         }
 
@@ -738,6 +812,16 @@ public class DownloadStorageProvider extends FileSystemProvider {
         final File downloadsDir = getPublicDownloadsDirectory();
         // Add every file from the Downloads directory to the result cursor. Ignore files that
         // were in the supplied downloaded file paths.
+        if(!downloadsDir.exists()) {
+            Log.d(TAG, "DownloadsDirectory " + downloadsDir +" not exist !");
+            getContext().getContentResolver().delete(Downloads.Impl.ALL_DOWNLOADS_CONTENT_URI,
+                    Downloads.Impl._DATA + " LIKE ? ",
+                    new String[] {downloadsDir.toString() + "%"});
+            if(!downloadsDir.mkdirs()) {
+                Log.w(TAG, "includeFilesFromSharedStorage fail to mkdir !");
+            }
+            return;
+        }
         for (File file : FileUtils.listFilesOrEmpty(downloadsDir)) {
             boolean inResultsAlready = downloadedFilePaths.contains(file.getAbsolutePath());
             boolean containsQuery = searchString == null || file.getName().contains(
@@ -1010,14 +1094,41 @@ public class DownloadStorageProvider extends FileSystemProvider {
 
             final String[] mimeTypes = queryArgs.getStringArray(
                     DocumentsContract.QUERY_ARG_MIME_TYPES);
+            ArrayList<String> asteriskmime = new ArrayList<String>();
+            ArrayList<String> exactmime = new ArrayList<String>();
             if (mimeTypes != null && mimeTypes.length > 0) {
-                if (selection.length() > 0) {
-                    selection.append(" AND ");
-                }
-                selection.append(DownloadColumns.MIME_TYPE + " IN (");
                 for (int i = 0; i < mimeTypes.length; ++i) {
-                    selection.append("?").append((i == mimeTypes.length - 1) ? ")" : ",");
-                    selectionArgs.add(mimeTypes[i]);
+                   if(mimeTypes[i].endsWith("*")) {
+                       asteriskmime.add(mimeTypes[i]);
+                   } else {
+                       exactmime.add(mimeTypes[i]);
+                   }
+                }
+                if(!exactmime.isEmpty()) {
+                    if (selection.length() > 0) {
+                        if(asteriskmime.isEmpty()) {
+                            selection.append(" AND ");
+                        } else {
+                            selection.append(" AND (");
+                        }
+                    }
+                    selection.append(DownloadColumns.MIME_TYPE + " IN (");
+                    for(int i = 0; i < exactmime.size(); i++) {
+                        selection.append("?").append((i == exactmime.size() - 1) ? ")" : ",");
+                        selectionArgs.add(exactmime.get(i));
+                    }
+                }
+                if(!asteriskmime.isEmpty()) {
+                    if(exactmime.isEmpty()) {
+                        selection.append(" AND (");
+                    } else {
+                        selection.append(" OR ");
+                    }
+                    for(int i = 0; i < asteriskmime.size(); i++) {
+                        selection.append(DownloadColumns.MIME_TYPE + " LIKE ?");
+                        selectionArgs.add(asteriskmime.get(i).substring(0, asteriskmime.get(i).length() -1) + "%");
+                        selection.append((i == asteriskmime.size() - 1) ? ")" : " OR ");
+                    }
                 }
             }
         }

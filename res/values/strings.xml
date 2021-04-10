@@ -196,6 +196,11 @@
         <item quantity="other"><xliff:g id="number">%d</xliff:g> files waiting</item>
     </plurals>
 
+    <plurals name="notif_summary_paused">
+        <item quantity="one"><xliff:g id="number">%d</xliff:g> file paused</item>
+        <item quantity="other"><xliff:g id="number">%d</xliff:g> files paused</item>
+    </plurals>
+
     <!-- Time remaining until download is complete. [CHAR LIMIT=32] -->
     <string name="download_remaining"><xliff:g id="duration" example="3 minutes">%s</xliff:g> left</string>
 
@@ -219,5 +224,7 @@
 
     <!-- Representation of download progress percentage when running. [CHAR LIMIT=24] -->
     <string name="download_running_percent">In progress, <xliff:g id="percentage" example="50%">%s</xliff:g></string>
+    <string name="download_paused">"Paused"</string>
+    <string name="download_confirm_msg">Downloading in cellular network will consume data. Continue?</string>
 
 </resources>

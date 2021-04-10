@@ -57,4 +57,6 @@
     <string name="download_running" msgid="3925050393361158266">"પ્રગતિ પર"</string>
     <string name="download_error" msgid="5144180777324573236">"અસફળ"</string>
     <string name="download_running_percent" msgid="4305080769167320204">"પ્રગતિ પર, <xliff:g id="PERCENTAGE">%s</xliff:g>"</string>
+    <string name="download_paused">"થંભાવ્યું છે"</string>
+    <string name="download_confirm_msg">"સેલ્યુલર નેટવર્કમાં ડાઉનલોડિંગ ડેટા વપરાશ કરશે. શું જાળવી રાખવું છે?"</string>
 </resources>
